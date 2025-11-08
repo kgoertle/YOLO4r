@@ -17,7 +17,7 @@ YOLO4r is still in early development as an undergraduate research project. The s
 - Example output includes: video recordings with bounding boxes + CSVs of counts and interactions.  
 
 ## Installation
-### Create the Python virtual environment:
+#### Create the Python virtual environment:
 python -m venv --system-site-packages ~/yolo4r
 
 #### Activate it using:
@@ -51,6 +51,7 @@ git clone https://github.com/kgoertle/YOLO4r.git
 #### Designed to allow users to debug training operation:
 - python train.py --test 
 
+
 ### Initiate Detection
 #### Defaults to mostly recently trained model and initiates usb0:
 - python detect.py
@@ -60,6 +61,7 @@ git clone https://github.com/kgoertle/YOLO4r.git
 
 #### Designed to allow users to route to debug model:
 - python detect.py --test 
+
 
 
 
