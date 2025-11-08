@@ -1,5 +1,5 @@
 YOLO4r
------------------------
+------
 Automated Animal Behavior Detection Pipeline
 
 Overview
@@ -35,7 +35,7 @@ Execution
 	- python train.py --test # Designed to allow users to debug training operation.
 
 • Initiate object detection:
-- python train.py --train # Transfer-learning from custom dataset.
-	- python detect.py # Defaults to mostly recently trained model and initiates usb0.
-	- python detect.py --sources usb0 usb1 "video1.type" "video2.type" # Initiate multiple sources in parallel.
-	- python detect.py --test # Designed to allow users to route to debug model.
+- python detect.py # Defaults to mostly recently trained model and initiates usb0.
+- python detect.py --sources usb0 usb1 "video1.type" "video2.type" # Initiate multiple sources in parallel.
+- python detect.py --test # Designed to allow users to route to debug model.
+
