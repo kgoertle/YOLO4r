@@ -29,13 +29,14 @@ pip install torch>=2.8.0 torchvision>=0.23.0 numpy>=1.23.0 opencv-python-headles
 Execution
 ---------
 • Initiate training:
-	- python train.py --train # Transfer-learning from custom dataset.
-	- python train.py --update # Update the most recently trained model.
-	- python train.py --scratch # Train a model only from custom dataset.
-	- python train.py --test # Designed to allow users to debug training operation.
+- python train.py --train # Transfer-learning from custom dataset.
+- python train.py --update # Update the most recently trained model.
+- python train.py --scratch # Train a model only from custom dataset.
+- python train.py --test # Designed to allow users to debug training operation.
 
 • Initiate object detection:
 - python detect.py # Defaults to mostly recently trained model and initiates usb0.
 - python detect.py --sources usb0 usb1 "video1.type" "video2.type" # Initiate multiple sources in parallel.
 - python detect.py --test # Designed to allow users to route to debug model.
+
 
