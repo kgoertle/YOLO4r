@@ -1,5 +1,4 @@
-# ====== MULTITHREADED YOLO DETECTION SCRIPT WITH IMPROVED LOGGING AND DASHBOARD ======
-import argparse, sys, threading, time, platform, os
+import sys, os, threading, time, platform, queue, re
 from pathlib import Path
 from datetime import datetime
 import numpy as np
@@ -7,326 +6,256 @@ import cv2
 from ultralytics import YOLO
 from pymediainfo import MediaInfo
 
+# ---- UTILITIES ----
+from utils.detect.paths import find_latest_best, get_output_folder
+from utils.detect.video_rotation import get_rotation_angle, rotate_frame
+from utils.detect.arg_parser import parse_arguments
+from utils.detect.logger import DetectionDashboard
+from utils.detect.temporal_aggregator import Aggregator
+from utils.detect.basic_counts import log_bird_counts_summary, flush_remaining_interval
+from utils.detect.interaction_metrics import InteractionMetrics
+
 BASE_DIR = Path(__file__).resolve().parent
 stop_event = threading.Event()
-print_lock = threading.Lock()
+IS_MAC, IS_LINUX = platform.system() == "Darwin", platform.system() == "Linux"
 
 
-# ----- REPORT SMOOTHING PARAMS -----
-def report_smoothing_params(args, user_set_flags, default_params):
-    for param in ['smooth', 'dist_thresh', 'max_history']:
-        value = getattr(args, param)
-        user_set = user_set_flags.get(param, False)
-        if user_set:
-            with print_lock:
-                print(f"[INFO] {param} set by user to {value}")
-        else:
-            with print_lock:
-                print(f"[INFO] {param} using {value}")
-
-
-# ----- INPUT & OUTPUT DIRECTORIES -----
-def find_latest_best(base_path):
-    base_path = Path(base_path)
-    if not base_path.exists():
-        return None
-    dirs = [d for d in base_path.iterdir() if d.is_dir()]
-    if not dirs:
-        return None
-
-    def parse_ts(name):
-        try:
-            return datetime.strptime(name, "%m-%d-%Y_%H-%M-%S")
-        except:
-            return datetime.min
-
-    latest = max(dirs, key=lambda d: parse_ts(d.name))
-    pt = latest / "weights" / "best.pt"
-    return pt if pt.exists() else None
-
-
-def get_output_folder(weights_path, source_type, source_name, test_detect=False):
-    train_folder = weights_path.parent.parent
-    out_dir = BASE_DIR / ("logs/test" if test_detect else "logs/main") / train_folder.name / "recordings"
-    out_dir = out_dir / ("video-in" if source_type == "video" else source_name)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    return out_dir
-
-
-# ----- VIDEO ROTATION -----
-def get_rotation_angle(video_path):
+def run_detection(weights_path, source, source_type, line_number, total_sources, dashboard, test=False):
     try:
-        media_info = MediaInfo.parse(str(video_path))
-        for track in media_info.tracks:
-            if track.track_type == "Video":
-                rotation = getattr(track, "rotation", 0)
-                if rotation:
-                    return int(float(rotation))
+        model = YOLO(str(weights_path))
+        model.weights_path = weights_path
     except Exception as e:
-        with print_lock:
-            print(f"[WARN] Could not read rotation from {video_path}: {e}")
-    return 0
+        dashboard.log(f"[ERROR] Could not initialize model in thread: {e}")
+        return
+    
+    # ---------- Prepare source names ----------
+    raw_source_name = f"{source_type}{source}" if source_type == "usb" else str(source)
+    display_name = raw_source_name if source_type == "usb" else Path(raw_source_name).stem
+    safe_source_name = re.sub(r'[^\w\-\.]', '_', display_name)
 
+    # ---------- Prepare output file ----------
+    video_folder, scores_folder = get_output_folder(model.weights_path, source_type, raw_source_name, test)
+    out_file = video_folder / f"{safe_source_name}.mp4"  # simplified name, no timestamp
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
 
-def rotate_frame(frame, angle):
-    if angle == 90:
-        return cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
-    if angle == 180:
-        return cv2.rotate(frame, cv2.ROTATE_180)
-    if angle == 270:
-        return cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
-    return frame
+    # ---------- Prepare measurement folders ----------
+    basic_counts_folder = scores_folder / "counts"
+    basic_counts_folder.mkdir(parents=True, exist_ok=True)
 
+    aggregator_folder = scores_folder / "raw_detection"
+    aggregator_folder.mkdir(parents=True, exist_ok=True)
 
-# ----- BOX SMOOTHING -----
-class BoxSmoother:
-    def __init__(self, max_history=5, alpha=0.6, dist_thresh=None):
-        self.max_history = max_history
-        self.alpha = alpha
-        self.dist_thresh = dist_thresh
-        self.history = []
-
-    @staticmethod
-    def smooth_angle(prev, new, alpha=0.6):
-        diff = ((new - prev + 180) % 360) - 180
-        return prev + alpha * diff
-
-    def smooth(self, boxes):
-        smoothed = []
-        new_history = []
-        for box in boxes:
-            cx, cy, w, h, angle, cls = box
-            matched = None
-            for hx, hy, hw, hh, hangle, hcls in self.history:
-                if cls != hcls:
-                    continue
-                if self.dist_thresh is None or np.linalg.norm([cx - hx, cy - hy]) < self.dist_thresh:
-                    matched = (hx, hy, hw, hh, hangle, hcls)
-                    break
-            if matched:
-                hx, hy, hw, hh, hangle, _ = matched
-                cx = self.alpha * cx + (1 - self.alpha) * hx
-                cy = self.alpha * cy + (1 - self.alpha) * hy
-                w = self.alpha * w + (1 - self.alpha) * hw
-                h = self.alpha * h + (1 - self.alpha) * hh
-                angle = self.smooth_angle(hangle, angle, self.alpha)
-                angle = ((angle + 180) % 360) - 180
-            smoothed.append([cx, cy, w, h, angle, cls])
-            new_history.append([cx, cy, w, h, angle, cls])
-        self.history = new_history[-self.max_history:]
-        return smoothed
-
-
-# ----- DASHBOARD HANDLER -----
-class Dashboard:
-    def __init__(self, total_sources):
-        self.total_sources = total_sources
-        self.lock = threading.Lock()
-        self.lines = [""] * total_sources  # current displayed text
-        term_height = os.get_terminal_size().lines
-        self.start_line = max(1, term_height - total_sources + 1)
-
-    def update(self, line_number, text):
-        """
-        line_number: 1-indexed thread line number
-        text: string to display for this thread
-        """
-        with self.lock:
-            if self.lines[line_number - 1] != text:
-                self.lines[line_number - 1] = text
-                print(f"\033[{self.start_line + line_number - 1};0H\033[K{text}", end="", flush=True)
-
-
-# ----- DETECTION LOOP -----
-def run_detection(model, source, source_type, line_number, total_sources, dashboard, test_detect=False, smoother=None):
-    source_name = f"{source_type}{source}" if source_type in ["usb", "picamera"] else str(source)
-    source_label = f"[{source_name}]"
-
-    out_path = get_output_folder(model.weights_path, source_type, source_name, test_detect)
-    out_file = out_path / f"{datetime.now().strftime('%m-%d-%Y_%H-%M-%S')}.avi"
-    fourcc = cv2.VideoWriter_fourcc(*'MJPG')
-
-    IS_MAC, IS_LINUX = platform.system() == "Darwin", platform.system() == "Linux"
-
+    # ---------- Open capture ----------
     if source_type == "usb":
-        cap = cv2.VideoCapture(int(source), cv2.CAP_AVFOUNDATION if IS_MAC else cv2.CAP_V4L2 if IS_LINUX else 0)
-    elif source_type == "picamera":
-        if not IS_LINUX:
-            print("[ERROR] Pi Camera only supported on Linux.")
-            return
-        from picamera2 import Picamera2
-        cap = Picamera2()
-        cap.configure(cap.create_video_configuration(main={"format": 'RGB888', "size": (1280, 720)}))
-        cap.start()
+        cap = cv2.VideoCapture(int(source),
+                               cv2.CAP_AVFOUNDATION if IS_MAC else cv2.CAP_V4L2 if IS_LINUX else 0)
     else:
         cap = cv2.VideoCapture(str(source))
 
-    if not cap or (source_type != "picamera" and not cap.isOpened()):
-        print(f"[ERROR] Could not open {source_name}!")
+    if not cap or not cap.isOpened():
+        dashboard.log(f"[ERROR] Could not open {raw_source_name}!")
         return
 
+    # ---------- Read first frame to get size ----------
     rotation_angle = get_rotation_angle(source) if source_type == "video" else 0
-    ret, frame = cap.read() if source_type != "picamera" else (True, cap.capture_array())
+    ret, frame = cap.read()
     if not ret or frame is None:
-        print(f"[ERROR] Could not read a frame from {source_name}")
+        dashboard.log(f"[ERROR] Could not read a frame from {raw_source_name}")
         return
-
-    if source_type == "picamera":
-        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-    if rotation_angle in [90, 180, 270]:
-        frame = rotate_frame(frame, rotation_angle)
-    elif frame.shape[0] > frame.shape[1]:
-        frame = rotate_frame(frame, 90)
-
+    if rotation_angle in [90, 180, 270] or frame.shape[0] > frame.shape[1]:
+        frame = rotate_frame(frame, rotation_angle or 90)
     height, width = frame.shape[:2]
-    out_writer = cv2.VideoWriter(str(out_file), fourcc, cap.get(cv2.CAP_PROP_FPS) or 30, (width, height))
 
-    smoother = smoother or BoxSmoother()
+    # ---------- Register writer ----------
+    fps_video = cap.get(cv2.CAP_PROP_FPS)
+    fps_video = fps_video if fps_video > 0 and not np.isnan(fps_video) else 20.0
+    out_writer = cv2.VideoWriter(str(out_file), fourcc, fps_video, (width, height))
+    dashboard.register_writer(raw_source_name, out_writer, cap, source_type, out_file)
+
+    # ---------- Frame queue ----------
+    frame_queue = queue.Queue(maxsize=10)
+    stop_reader = threading.Event()
+
+    # ---------- Initiate Aggregator ----------
+    aggregator = Aggregator(interval_sec=5, session_sec=10)
+
+    # ---------- Initiate Interaction Metrics ----------
+    interaction_folder = scores_folder / "interactions"
+    metrics = InteractionMetrics(interaction_folder)
+
+    def read_frames():
+        while not stop_reader.is_set():
+            ret, frame = cap.read()
+            if not ret:
+                stop_reader.set()
+                break
+            try:
+                frame_queue.put(frame, timeout=0.1)
+            except queue.Full:
+                pass
+
+    reader_thread = threading.Thread(target=read_frames, daemon=True)
+    reader_thread.start()
+
     frame_count, fps_smooth, prev_time = 0, 0, time.time()
+    start_time = time.time()
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0) if source_type == "video" else None
-    fps_video = cap.get(cv2.CAP_PROP_FPS) or 30 if source_type == "video" else None
 
     try:
         while not stop_event.is_set():
-            ret, frame = cap.read() if source_type != "picamera" else (True, cap.capture_array())
-            if not ret or frame is None:
-                break
-            if source_type == "picamera":
-                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            if rotation_angle in [90, 180, 270]:
-                frame = rotate_frame(frame, rotation_angle)
-            elif frame.shape[0] > frame.shape[1]:
-                frame = rotate_frame(frame, 90)
+            try:
+                frame = frame_queue.get(timeout=0.5)
+            except queue.Empty:
+                if stop_reader.is_set():
+                    break
+                continue
 
-            draw_frame = frame.copy()
-            results = model.predict(draw_frame, verbose=False, show=False)
-            draw_frame = results[0].plot() if results else draw_frame
+            if rotation_angle in [90, 180, 270] or frame.shape[0] > frame.shape[1]:
+                frame = rotate_frame(frame, rotation_angle or 90)
 
-            smoothed_boxes_list = []
-            if results and hasattr(results[0], 'obb') and results[0].obb is not None:
+           # ---------- Inference ----------
+            try:
+                results = model.predict(frame, verbose=False, show=False, imgsz=640)
+                annotated_frame = results[0].plot() if results and len(results) > 0 else frame
+            except Exception as e:
+                dashboard.log(f"[ERROR] Inference failed for {display_name}: {e}")
+                annotated_frame = frame  # fallback to raw frame
+
+            # ---------- Current Boxes ----------
+            current_boxes_list = []
+            if results and hasattr(results[0], "obb") and results[0].obb is not None:
                 boxes = results[0].obb.xywhr.cpu().numpy()
                 classes = results[0].obb.cls.cpu().numpy()
-                smoothed_boxes = smoother.smooth([
+                current_boxes_list = [
                     [cx, cy, w, h, float(angle), int(cls)]
                     for cx, cy, w, h, angle, cls in zip(
-                        boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3], boxes[:, 4], classes
+                        boxes[:,0], boxes[:,1], boxes[:,2], boxes[:,3], boxes[:,4], classes
                     )
-                ])
-                smoothed_boxes_list.extend(smoothed_boxes)
+                ]
 
+            # ---------- Class counts ----------
             names = results[0].names if results else {}
+            males = sum(1 for b in current_boxes_list if names.get(b[5]) == "M")
+            females = sum(1 for b in current_boxes_list if names.get(b[5]) == "F")
+            other_objects = sum(1 for b in current_boxes_list if names.get(b[5]) not in ["M","F"])
 
+            # ---------- Push to aggregator ----------
+            other_counts_dict = {
+                'Feeder': sum(1 for b in current_boxes_list if names.get(b[5]) == 'Feeder'),
+                'Main_Perch': sum(1 for b in current_boxes_list if names.get(b[5]) == 'Main_Perch'),
+                'Wooden_Perch': sum(1 for b in current_boxes_list if names.get(b[5]) == 'Wooden_Perch'),
+                'Sky_Perch': sum(1 for b in current_boxes_list if names.get(b[5]) == 'Sky_Perch'),
+                'Nesting_Box': sum(1 for b in current_boxes_list if names.get(b[5]) == 'Nesting_Box')
+            }
+
+            aggregator.push_frame_data(datetime.now(), males, females, other_counts_dict)
+
+            # ---------- Log basic counts ----------
+            log_bird_counts_summary(current_boxes_list, names, basic_counts_folder, interval_sec=aggregator.interval_sec)
+
+            # ---------- Log interaction metrics ----------
+            metrics.process_frame(current_boxes_list, names, timestamp=datetime.now())
+
+            # ---------- Time and FPS ----------
             fps_smooth = 0.9 * fps_smooth + 0.1 * (1 / (time.time() - prev_time + 1e-6))
             prev_time = time.time()
             frame_count += 1
 
-            males = sum(1 for b in smoothed_boxes_list if names.get(b[5]) == "M")
-            females = sum(1 for b in smoothed_boxes_list if names.get(b[5]) == "F")
-            other_objects = sum(1 for b in smoothed_boxes_list if names.get(b[5]) not in ["M", "F"])
-
             if source_type == "video":
                 elapsed_sec = frame_count / fps_video
                 total_sec = total_frames / fps_video if total_frames else 0
-                time_info = f"{int(elapsed_sec // 60):02d}:{int(elapsed_sec % 60):02d}/{int(total_sec // 60):02d}:{int(total_sec % 60):02d}"
+                time_info = f"{int(elapsed_sec // 60):02d}:{int(elapsed_sec % 60):02d}/" \
+                            f"{int(total_sec // 60):02d}:{int(total_sec % 60):02d}"
             else:
-                elapsed_sec = int(time.time() - prev_time)
+                elapsed_sec = int(time.time() - start_time)
                 h, m = divmod(elapsed_sec // 60, 60)
                 s = elapsed_sec % 60
                 time_info = f"{h:02d}:{m:02d}:{s:02d}"
 
-            dashboard.update(
-                line_number,
-                f"[{source_name}] Frames:{frame_count} | FPS:{fps_smooth:.1f} | "
-                f"Males:{males} | Females:{females} | Objects:{other_objects} | Time:{time_info}"
-            )
-            out_writer.write(draw_frame)
+            # ---------- Update dashboard ----------
+            if frame_count % 5 == 0:
+                dashboard.update_line(
+                    line_number,
+                    f"[{display_name}] Frames:{frame_count} | FPS:{fps_smooth:.1f} | "
+                    f"Males:{males} | Females:{females} | Objects:{other_objects} | Time:{time_info}"
+                )
+
+            # ---------- Write frame ----------
+            out_writer.write(annotated_frame)
+            time.sleep(0.001)
 
     finally:
-        if source_type in ["usb", "video"]:
-            cap.release()
-        elif source_type == "picamera":
-            cap.stop()
-        out_writer.release()
-        with print_lock:
-            print(f"\033[{dashboard.start_line + dashboard.total_sources};0H[SAVE] Detection results saved to: {out_file}")
+        stop_reader.set()
+        reader_thread.join()
+        cap.release()
+        dashboard.safe_release_writer(raw_source_name)
 
+        # ---------- Save aggregator CSVs ----------
+        interval_file, session_file = aggregator.save_results(aggregator_folder)
+        if interval_file and session_file:
+            dashboard.log(f"[SAVE] Interval results saved to: {interval_file}")
+            dashboard.log(f"[SAVE] Session summary saved to: {session_file}")
+        else:
+            dashboard.log(f"[SAVE] No aggregator results to save for {display_name}.")
 
-# ------ ARGUMENT PARSER -------
+        # ---------- Flush any remaining counts ----------
+        flush_remaining_interval(out_folder=basic_counts_folder)
+        dashboard.log(f"[SAVE] Object counts saved to: {basic_counts_folder}")
+
+        # ---------- Save interaction CSVs ----------
+        interaction_file = metrics.finalize()
+        if interaction_file:
+            dashboard.log(f"[SAVE] Interaction metrics saved to: {interaction_file}")
+
+# ------ MAIN FUNCTION -------
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run YOLO detection using latest best.pt")
-    parser.add_argument("--detect", action="store_true")
-    parser.add_argument("--test-detect", action="store_true")
-    parser.add_argument("--sources", nargs='+', required=True)
-    parser.add_argument("--lab", action="store_true")
-    parser.add_argument("--smooth", type=float, default=1.0)
-    parser.add_argument("--dist-thresh", type=float, default=None)
-    parser.add_argument("--max-history", type=int, default=0)
-    args = parser.parse_args()
-
-    if args.detect and args.test_detect:
-        print("[ERROR] Please decide between --detect or --test-detect, not both.")
-        sys.exit(1)
-
-    runs_dir = BASE_DIR / ("runs/main" if args.detect else "runs/test")
+    args = parse_arguments()
+    runs_dir = BASE_DIR / ("runs/test" if args.test else "runs/main")
     weights_path = find_latest_best(runs_dir)
+
     if not weights_path:
         print(f"[ERROR] Could not find a valid best.pt in {runs_dir}")
         sys.exit(1)
 
-    print(f"[INFO] Loading model from {weights_path}.")
+    print(f"[LOAD] Initializing model: {weights_path}.")
     model = YOLO(str(weights_path))
     model.weights_path = weights_path
 
-    user_set_flags = {
-        'smooth': '--smooth' in sys.argv,
-        'dist_thresh': '--dist-thresh' in sys.argv,
-        'max_history': '--max-history' in sys.argv
-    }
-
-    if args.lab:
-        if not user_set_flags['smooth']:
-            args.smooth = 0.6
-        if not user_set_flags['dist_thresh']:
-            args.dist_thresh = 70
-        if not user_set_flags['max_history']:
-            args.max_history = 4
-
-    report_smoothing_params(args, user_set_flags, {'smooth': 1.0, 'dist_thresh': None, 'max_history': 0})
-
-    smoothers, threads = {}, []
     total_sources = len(args.sources)
-    dashboard = Dashboard(total_sources)
+    dashboard = DetectionDashboard(total_sources)
 
-    for i, src in enumerate(args.sources, start=1):
+    threads = []
+    if total_sources == 1:
+        src = args.sources[0]
+        source_type = "usb" if src.lower().startswith("usb") else "video"
+        src_id = int(src[3:]) if source_type == "usb" else src
         try:
-            if src.lower().startswith("usb"):
-                source_type = "usb"; src_id = int(src[3:])
-            elif src.lower().startswith("picamera"):
-                source_type = "picamera"; src_id = int(src[9:])
-            else:
-                source_type = "video"; src_id = src
-        except ValueError:
-            print(f"[ERROR] Invalid source ID format: {src}")
-            continue
-
-        if src_id not in smoothers:
-            smoothers[src_id] = BoxSmoother(
-                max_history=args.max_history,
-                alpha=args.smooth,
-                dist_thresh=args.dist_thresh
+            run_detection(weights_path, src_id, source_type, 1, total_sources, dashboard, args.test)
+        except KeyboardInterrupt:
+            dashboard.log("[EXIT] Stop signal received. Terminating pipeline...")
+            stop_event.set()
+        finally:
+            dashboard.safe_release_writer(src_id if source_type == "usb" else src)
+    else:
+        for i, src in enumerate(args.sources, start=1):
+            source_type = "usb" if src.lower().startswith("usb") else "video"
+            src_id = int(src[3:]) if source_type == "usb" else src
+            t = threading.Thread(
+                target=run_detection,
+                args=(weights_path, src_id, source_type, i, total_sources, dashboard, args.test)
             )
+            t.start()
+            threads.append(t)
 
-        t = threading.Thread(
-            target=run_detection,
-            args=(model, src_id, source_type, i, total_sources, dashboard, args.test_detect, smoothers[src_id])
-        )
-        t.start()
-        threads.append(t)
+        try:
+            while any(t.is_alive() for t in threads):
+                for t in threads:
+                    t.join(timeout=0.5)
+        except KeyboardInterrupt:
+            dashboard.log("[EXIT] Stop signal received. Terminating pipelines...")
+            stop_event.set()
+            for t in threads:
+                t.join(timeout=2)
 
-    try:
-        [t.join() for t in threads]
-    except KeyboardInterrupt:
-        print("\n[EXIT] Stop signal received. Terminating threads...")
-        stop_event.set()
-        [t.join() for t in threads]
-        print("[EXIT] All detection threads safely terminated.")
+    dashboard.release_all_writers()
+    dashboard.log("[EXIT] All detection threads safely terminated.")
