@@ -35,7 +35,7 @@ git clone https://github.com/kgoertle/YOLO4r.git
 ### Prerequisites
 - Must use Python 3.10 or older.
 - Keep in mind, training and detection require entirely separate system requirements.
-- A computer with an relatively powerful CPU or has a GPU with CUDA enabled is required.
+- A computer with a relatively powerful CPU or has a GPU with CUDA enabled is required.
 
 ## Execution
 ### Initiate Training
@@ -61,6 +61,7 @@ git clone https://github.com/kgoertle/YOLO4r.git
 
 #### Designed to allow users to route to debug model:
 - python detect.py --test 
+
 
 
 
