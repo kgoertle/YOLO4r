@@ -55,7 +55,7 @@ Supports automatic calculation of ratios (e.g., M:F) & normalized detection rate
 Integrates a **clean, timestamped log structure** for both camera feeds & videos:
 
 **Camera sources:**
-
+```
 /YOLO4r/logs/(model_name)/measurements/camera-feed/(source_name)/(system_timestamp)/measurements/
 ├── recordings/
 │   └── usb0.mp4
@@ -68,9 +68,10 @@ Integrates a **clean, timestamped log structure** for both camera feeds & videos
     │   └── average_counts.csv
     └── interactions/
         └── interactions.csv
+```
 
 **Video sources:**
-
+```
 /YOLO4r/logs/(model_name)/measurements/video-in/(source_name)/(video_timestamp)/measurements/
 ├── recordings/
 │   └── video.mp4
@@ -83,6 +84,7 @@ Integrates a **clean, timestamped log structure** for both camera feeds & videos
     │   └── average_counts.csv
     └── interactions/
         └── interactions.csv
+```
 
 - Folder names are **automatically sanitized** to avoid filesystem errors.  
 - Each source has its own **isolated measurement subdirectory**.  
@@ -132,6 +134,7 @@ Integrates a **clean, timestamped log structure** for both camera feeds & videos
 
 #### - Designed to allow users to route to debug model:
 `python detect.py --test `
+
 
 
 
