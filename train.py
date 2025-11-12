@@ -1,88 +1,101 @@
-import argparse
 import sys
 import time
+from pathlib import Path
 from datetime import datetime
 from ultralytics import YOLO
-import wandb
 
 # ------ UTILITIES ------
-from utils.train.downloads import ensure_yolo_yaml, ensure_weights
-from utils.train.results import count_images, load_latest_metadata, parse_results, save_quick_summary, save_metadata
-from utils.train.devices import select_device
-from utils.train.paths import DATA_YAML, YOLO_WEIGHTS, YOLO_YAML, get_training_paths
-from utils.train.checkpoints import get_checkpoint_and_resume
-from utils.train.argparser import get_args
+from utils.train import (
+    get_args,
+    get_training_paths,
+    ensure_weights,
+    count_images,
+    load_latest_metadata,
+    get_checkpoint_and_resume,
+    select_device,
+    parse_results,
+    save_quick_summary,
+    save_metadata,
+    process_labelstudio_project,
+    init_wandb
+)
 
-# ------ TRAINING LOGIC ------
-def train_yolo(mode="train", checkpoint=None, resume_flag=False, test=False, float32=False, float16=False):
-    if not DATA_YAML.exists():
-        print(f"[ERROR] DATA_YAML not found: {DATA_YAML}")
-        return
+# ------ TRAINING FUNCTION ------
+def train_yolo(args, mode="train", checkpoint=None, resume_flag=False):
+    """Orchestrates YOLO model training based on mode and arguments."""
 
-    YOLO_YAML_PATH = ensure_yolo_yaml(YOLO_YAML)
-    if not YOLO_YAML_PATH:
+    # ---- Validate dataset YAML ----
+    if not args.DATA_YAML.exists():
+        print(f"[ERROR] DATA_YAML not found: {args.DATA_YAML}")
         return
 
     reset_weights = mode == "scratch"
-    epochs, imgsz = (10, 640) if test else (120, 640)
-    if reset_weights and not test:
+    epochs, imgsz = (10, 640) if args.test else (120, 640)
+    if reset_weights and not args.test:
         epochs = 150
 
-    # ------ Updating Structure ------
-    paths = get_training_paths(test=test)
-
-    total_imgs = count_images(paths["train_folder"]) + count_images(paths["val_folder"])
+    total_imgs = count_images(args.train_folder) + count_images(args.val_folder)
     new_imgs = 0
 
+    # ---- Update mode image check ----
     if mode == "update":
-        prev_meta = load_latest_metadata(paths["logs_root"])
-        if prev_meta and total_imgs <= prev_meta.get("total_images_used", 0):
+        logs_root = get_training_paths(args.DATA_YAML.parent, test=args.test)["logs_root"]
+        prev_meta = load_latest_metadata(logs_root)
+        prev_total = prev_meta.get("total_images_used", 0) if prev_meta else 0
+        new_imgs = total_imgs - prev_total
+        if new_imgs <= 0:
             print("[INFO] No new images detected. Skipping training.")
             return
-        new_imgs = total_imgs - (prev_meta.get("total_images_used", 0) if prev_meta else 0)
-        if new_imgs:
-            print(f"[INFO] {new_imgs} new images detected. Proceeding.")
+        print(f"[INFO] {new_imgs} new images detected. Proceeding with update.")
 
-    # ------ Determine Weights ------
-    weights_path = checkpoint if checkpoint else (None if reset_weights else ensure_weights(YOLO_WEIGHTS))
+    # ---- Model selection (scratch / transfer / update) ----
+    if reset_weights:
+        model_source = str(args.model_yaml)
+        use_pretrained = False
+    else:
+        # Ensure checkpoint is a Path object if present
+        if checkpoint:
+            checkpoint = Path(checkpoint)
+            model_source = str(checkpoint)
+        else:
+            # args.weights is already a Path from get_args()
+            model_source = str(ensure_weights(args.weights))
+        use_pretrained = True
 
-    # ------ Output structure ------
+    # ---- Device and batch settings ----
     device, batch_size, workers = select_device()
-
     timestamp = datetime.now().strftime("%m-%d-%Y_%H-%M-%S")
-    run_name = timestamp
+    run_name = args.name or timestamp
+
+    paths = get_training_paths(args.DATA_YAML.parent, test=args.test)
     run_folder = paths["runs_root"] / run_name
     log_dir = paths["logs_root"] / run_name
 
-    # ------ Initialize model ------
-    if reset_weights:
-        print(f"[INFO] Init model from scratch: {YOLO_YAML_PATH}")
-        model = YOLO(str(YOLO_YAML_PATH))
-    else:
-        print(f"[INFO] Init model from weights: {weights_path}")
-        model = YOLO(str(weights_path))
+    print(f"[INFO] Initializing model from {'scratch' if not use_pretrained else 'weights'}: {model_source}")
+    model = YOLO(model_source)
 
-    # ------ Weights & Biases integration ------
-    from utilities.wandb import init_wandb
-    init_wandb(run_name)
+    try:
+        init_wandb(run_name)
+    except Exception as e:
+        print(f"[WARN] Failed to initialize W&B: {e}")
 
-    # ------ Training Settings ------
-    print(f"[INFO] Starting training: {mode}")
-    start = time.time()
+    print(f"[INFO] Starting training mode: {mode}")
+    start_time = time.time()
+
     try:
         model.train(
-            data=str(DATA_YAML),
-            model=str(YOLO_YAML_PATH),
+            data=str(args.DATA_YAML),
+            model=model_source,
             epochs=epochs,
             resume=resume_flag,
             patience=10,
             imgsz=imgsz,
             batch=batch_size,
             workers=workers,
-            project=paths["runs_root"],
+            project=str(paths["runs_root"]),
             name=run_name,
             exist_ok=False,
-            pretrained=not reset_weights,
+            pretrained=use_pretrained,
             device=device,
             augment=True,
             mosaic=True,
@@ -102,33 +115,33 @@ def train_yolo(mode="train", checkpoint=None, resume_flag=False, test=False, flo
         )
     except KeyboardInterrupt:
         print("\n[INFO] Training interrupted by user. Partial results preserved.")
+    except Exception as e:
+        print(f"[ERROR] Training failed: {e}")
+        return
 
-    print(f"[INFO] Training complete in {(time.time() - start)/60:.2f} minutes.")
+    elapsed = (time.time() - start_time) / 60
+    print(f"[INFO] Training completed in {elapsed:.2f} minutes.")
 
-    # ------ Optional TFLite export ------
-    from utilities.format_util import export_tflite
-    export_tflite(model, DATA_YAML, imgsz=imgsz, float32=float32, float16=float16)
-
-    # ------ Post-training summary ------
     try:
         metrics = parse_results(run_folder) or {}
         save_quick_summary(log_dir, mode, epochs, metrics, new_imgs, total_imgs)
         save_metadata(log_dir, mode, epochs, new_imgs, total_imgs)
     except Exception as e:
-        print(f"[ERROR] Post-training summary failed: {e}")
+        print(f"[ERROR] Failed to save post-training metadata: {e}")
+
 
 # ------ MAIN ENTRY ------
 def main():
     args, mode = get_args()
 
-    # ------ Checkpoint logic ------
-    runs_dir = get_training_paths(test=args.test)["runs_root"]
+    checkpoint, resume_flag = None, args.resume
     try:
         checkpoint, resume_flag = get_checkpoint_and_resume(
             mode=mode,
             resume_flag=args.resume,
-            runs_dir=runs_dir,
-            default_weights=YOLO_WEIGHTS
+            runs_dir=get_training_paths(args.DATA_YAML.parent, test=args.test)["runs_root"],
+            default_weights=args.weights,
+            custom_weights=args.weights
         )
         if checkpoint:
             print(f"[INFO] Using checkpoint: {checkpoint}")
@@ -136,17 +149,8 @@ def main():
         print(f"[ERROR] {e}")
         sys.exit(1)
 
-    # ------ Training Initialization ------
-    train_yolo(
-        mode=mode,
-        checkpoint=checkpoint,
-        resume_flag=resume_flag,
-        test=args.test,
-        float32=args.float32,
-        float16=args.float16
-    )
+    train_yolo(args, mode=mode, checkpoint=checkpoint, resume_flag=resume_flag)
 
 
 if __name__ == "__main__":
     main()
-
