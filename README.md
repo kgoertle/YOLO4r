@@ -1,4 +1,5 @@
 # YOLO4r
+You Only Look Once For Research
 Automated Animal Behavior Detection Pipeline
 
 ## Overview
@@ -61,6 +62,7 @@ git clone https://github.com/kgoertle/YOLO4r.git
 
 #### Designed to allow users to route to debug model:
 - python detect.py --test 
+
 
 
 
