@@ -4,7 +4,7 @@
 An open-source, automated animal-behavior detection pipeline.
 
 ## Overview
-**YOLO4r (beta-6.0)** is a research-oriented, Ultralytics-based pipeline designed to make custom deep-learning model training & behavioral detection accessible to field & laboratory researchers.  
+**YOLO4r (beta-7.1)** is a research-oriented, Ultralytics-based pipeline designed to make custom deep-learning model training & behavioral detection accessible to field & laboratory researchers.  
 
 **YOLO4r supports:**
 
@@ -116,13 +116,22 @@ Integrates a **clean, timestamped log structure** for both camera feeds & videos
 ## Execution
 ### Initiate Training
 #### - Transfer-learning from custom dataset:
-`python train.py --train`
+`python train.py --weights`
+Option to specify weights from either OBB or standard YOLO11 model.
 
 #### - Update the most recently trained model:
 `python train.py --update`
 
 #### - Train a model only from custom dataset:
-`python train.py --scratch`
+`python train.py --scratch --model`
+Option to specify model architecture when training from scratch.
+
+#### - Name your model:
+`python train.py --name`
+
+#### - Include a specific model, weights, dataset:
+`python train.py --dataset`
+Option to specify dataset within `data` folder.
 
 #### - Designed to allow users to debug training operation:
 `python train.py --test`
@@ -136,3 +145,4 @@ Integrates a **clean, timestamped log structure** for both camera feeds & videos
 
 #### - Designed to allow users to route to debug model:
 `python detect.py --test `
+
