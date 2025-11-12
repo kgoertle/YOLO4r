@@ -69,6 +69,10 @@ def get_args():
     data_root = BASE_DIR / "data"
     data_root.mkdir(exist_ok=True)
 
+    # Ensure all essential folders exist
+    paths["weights_folder"].mkdir(parents=True, exist_ok=True)
+    paths["models_folder"].mkdir(parents=True, exist_ok=True)
+    
     # ---- Detect Label Studio projects in BASE_DIR if dataset not specified ----
     dataset_folder = None
     if args.dataset:
@@ -130,3 +134,4 @@ def get_args():
     args.dataset_folder = dataset_folder
 
     return args, mode
+
