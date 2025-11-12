@@ -2,7 +2,7 @@
 Automated Animal Behavior Detection Pipeline
 
 ## Overview
-YOLO4r (v5) is a YOLO by Ultralytics-based pipeline developing to allow researchers to design custom deep-learning models for accessible detection and measurement of animal behaviors. There is a current developmental focus on house sparrows for our own use-case. The pipeline supports custom dataset training, multiple video inputs and camera feeds processed in parallel, logs detection counts and interactions, and exports structured metrics for analysis. 
+YOLO4r (beta-6.0) is a YOLO by Ultralytics-based pipeline developing to allow researchers to design custom deep-learning models for accessible detection and measurement of animal behaviors. There is a current developmental focus on house sparrows for our own use-case. The pipeline supports custom dataset training, multiple video inputs and camera feeds processed in parallel, logs detection counts and interactions, and exports structured metrics for analysis. 
 YOLO4r is still in early development as an undergraduate research project. The scope is rather large and may take time to develop to completion. The project will always be open-source and contributions are always welcome!
 
 ## Features  
@@ -57,10 +57,11 @@ git clone https://github.com/kgoertle/YOLO4r.git
 - python detect.py
 
 #### Initiate multiple sources in parallel:
-- python detect.py --sources usb0 usb1 "video1.type" "video2.type"
+- python detect.py usb0 usb1 "video1.type" "video2.type"
 
 #### Designed to allow users to route to debug model:
 - python detect.py --test 
+
 
 
 
