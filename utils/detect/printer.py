@@ -79,7 +79,7 @@ class Printer:
         if not model_dirs:
             self.missing_weights(runs_dir)
             return None
-        self.model_prompt(len(model_dirs), runs_dir)
+        sself.model_prompt(model_dirs)
         while True:
             choice = input(f"Select a model run (1-{len(model_dirs)}): ")
             if choice.isdigit() and 1 <= int(choice) <= len(model_dirs):
@@ -176,3 +176,4 @@ class Printer:
     def release_all_writers(self):
         for name in list(self.active_writers.keys()):
             self.safe_release_writer(name)
+
