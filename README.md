@@ -60,6 +60,7 @@ Integrates a **clean, timestamped log structure** for both camera feeds & videos
 ├── recordings/
 │   └── usb0.mp4
 └── scores/
+    ├── source_metadata.json
     ├── frame-data/
     │   ├── interval_results.csv
     │   └── session_summary.csv
@@ -76,6 +77,7 @@ Integrates a **clean, timestamped log structure** for both camera feeds & videos
 ├── recordings/
 │   └── video.mp4
 └── scores/
+    ├── source_metadata.json
     ├── frame-data/
     │   ├── interval_results.csv
     │   └── session_summary.csv
@@ -122,7 +124,7 @@ Integrates a **clean, timestamped log structure** for both camera feeds & videos
 #### - Train a model only from custom dataset:
 `python train.py --scratch`
 
-#### Designed to allow users to debug training operation:
+#### - Designed to allow users to debug training operation:
 `python train.py --test`
 
 ### Initiate Detection
@@ -134,8 +136,3 @@ Integrates a **clean, timestamped log structure** for both camera feeds & videos
 
 #### - Designed to allow users to route to debug model:
 `python detect.py --test `
-
-
-
-
-
