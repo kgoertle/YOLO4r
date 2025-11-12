@@ -4,14 +4,14 @@
 An open-source, automated animal-behavior detection pipeline.
 
 ## Overview
-**YOLO4r (beta-6.0)** is a research-oriented, Ultralytics-based pipeline designed to make custom deep-learning model training and behavioral detection accessible to field and laboratory researchers.  
+**YOLO4r (beta-6.0)** is a research-oriented, Ultralytics-based pipeline designed to make custom deep-learning model training & behavioral detection accessible to field & laboratory researchers.  
 
 **YOLO4r supports:**
 
 - Multi-source real-time inference (video & live camera feeds).
 - Structured logging of detections, interactions, & per-frame aggregate statistics.
 - Automatic metadata extraction for precise timestamping.
-- Full configurability and modular design for research reproducibility.
+- Full configurability & modular design for research reproducibility.
 
 This project remains open-source & under active development as part of an undergraduate research initiative. Contributions & feedback are always welcome!
 
@@ -25,7 +25,7 @@ This project remains open-source & under active development as part of an underg
 - Supports **aggressive data augmentation** & **auto-detection of new data** for retraining.
 
 ### Detection Pipeline
-- **Multi-threaded inference** across multiple sources (camera feeds and videos).  
+- **Multi-threaded inference** across multiple sources (camera feeds & videos).  
 - **Metadata-aware timestamping** for accurate frame-aligned measurements.
 - **Centralized message handling** using `Printer` for all info, warnings, errors, & save confirmations.
 - **Robust exception handling** for model initialization, frame errors, & I/O failures.
@@ -40,11 +40,11 @@ Default example model trained on **7 classes**:
   - `M` (Male Passer domesticus), `F` (Female Passer domesticus), `Feeder`, `Main_Perch`, `Wooden_Perch`, `Sky_Perch`, `Nesting_Box`
 
 ### Measurement System
-- Handles all data collection:
+- Data collection centralized in single helper utility that handles:
   - Frame-level counts  
   - Interval-level aggregation  
   - Session summaries  
-  - Interaction tracking (focus vs. context)
+  - Interaction tracking (focus vs. context classes)
 - Exports structured `.csv` summaries:
   - `counts.csv`, `average_counts.csv`
   - `interval_results.csv`, `session_summary.csv`
@@ -134,3 +134,4 @@ cd ~/path/to/YOLO4r
 
 #### Designed to allow users to route to debug model:
 - python detect.py --test 
+
