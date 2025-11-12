@@ -1,22 +1,93 @@
 # YOLO4r
 **You Only Look Once For Research**
 
-An open-source, automated animal-behavior detection pipeline. 
+An open-source, automated animal-behavior detection pipeline.
 
 ## Overview
-YOLO4r (beta-6.0) is a YOLO by Ultralytics-based pipeline developing to allow researchers to design custom deep-learning models for accessible detection and measurement of animal behaviors. There is a current developmental focus on house sparrows for our own use-case. The pipeline supports custom dataset training, multiple video inputs and camera feeds processed in parallel, logs detection counts and interactions, and exports structured metrics for analysis. 
-YOLO4r is still in early development as an undergraduate research project. The scope is rather large and may take time to develop to completion. The project will always be open-source and contributions are always welcome!
+**YOLO4r (beta-6.0)** is a research-oriented, Ultralytics-based pipeline designed to make custom deep-learning model training and behavioral detection accessible to field and laboratory researchers.  
 
-## Features  
-- Option to train custom model using transfer-learning, training from scratch, or updating the current model.
-- Training metrics parsed to Weights & Biases and a quick-summary.txt file.
-- Multi‑threaded inference on one or multiple video and USB sources.
-- Detection of seven classes: M (males), F (females), Feeder, Main_Perch, Wooden_Perch, Sky_Perch, Nesting_Box.
-- Interval‑based aggregation with session summaries. (e.g., counts, rates, M:F ratios)
-- Interaction metrics between bird sexes and objects. (e.g., male visits feeder, duration logged)
-- Modular utilities for routing, logging, folder structure, video-rotation correction.
-- Configurable run modes: '–-test' vs production.
-- Example output includes: video recordings with bounding boxes + CSVs of counts and interactions.  
+**YOLO4r supports:**
+
+- Multi-source real-time inference (video & live camera feeds).
+- Structured logging of detections, interactions, & per-frame aggregate statistics.
+- Automatic metadata extraction for precise timestamping.
+- Full configurability and modular design for research reproducibility.
+
+This project remains open-source & under active development as part of an undergraduate research initiative. Contributions & feedback are always welcome!
+
+## Features
+
+### Model Training
+- Supports **transfer learning**, **training from scratch**, or **incremental updating** of an existing model.  
+- Automatically exports **training metrics** to:
+  - `Weights & Biases` (W&B)  
+  - `quick-summary.txt` (local lightweight summary)
+- Supports **aggressive data augmentation** & **auto-detection of new data** for retraining.
+
+### Detection Pipeline
+- **Multi-threaded inference** across multiple sources (camera feeds and videos).  
+- **Metadata-aware timestamping** for accurate frame-aligned measurements.
+- **Centralized message handling** using `Printer` for all info, warnings, errors, & save confirmations.
+- **Robust exception handling** for model initialization, frame errors, & I/O failures.
+
+### Classes & Configuration
+- YOLO4r uses **user-defined class configurations**:
+  - `FOCUS_CLASSES`: primary subjects (e.g., animal species)
+  - `CONTEXT_CLASSES`: contextual or environmental elements (e.g., feeders, water trays, etc)
+- Class lists are stored in & managed through `classes_config.yaml` within the config folder, allowing for easy modification without editing code.
+
+Default example model trained on **7 classes**:
+  - `M` (Male Passer domesticus), `F` (Female Passer domesticus), `Feeder`, `Main_Perch`, `Wooden_Perch`, `Sky_Perch`, `Nesting_Box`
+
+### Measurement System
+- Handles all data collection:
+  - Frame-level counts  
+  - Interval-level aggregation  
+  - Session summaries  
+  - Interaction tracking (focus vs. context)
+- Exports structured `.csv` summaries:
+  - `counts.csv`, `average_counts.csv`
+  - `interval_results.csv`, `session_summary.csv`
+  - `interactions.csv`
+Supports automatic calculation of ratios (e.g., M:F) & normalized detection rates.
+
+### Directory and Output Structure
+Integrates a **clean, timestamped log structure** for both camera feeds & videos:
+
+**Camera sources:**
+
+/YOLO4r/logs/(model_name)/measurements/camera-feed/(source_name)/(system_timestamp)/measurements/
+  recordings/
+    usb0.mp4
+  scores/
+    (source)-metadata.json
+    frame-data/
+      interval_results.csv
+      session_summary.csv
+    counts/
+      counts.csv
+      average_counts.csv
+    interactions/
+      interactions.csv
+
+**Video sources:**
+
+/YOLO4r/logs/(model_name)/measurements/video-in/(source_name)/(video_timestamp)/measurements/
+  recordings/
+    video.mp4
+  scores/
+    (source)-metadata.json
+    frame-data/
+      interval_results.csv
+      session_summary.csv
+    counts/
+      counts.csv
+      average_counts.csv
+    interactions/
+      interactions.csv
+
+- Folder names are **automatically sanitized** to avoid filesystem errors.  
+- Each source has its own **isolated measurement subdirectory**.  
 
 ## Installation
 #### Create the Python virtual environment:
@@ -33,6 +104,7 @@ pip install torch>=2.8.0 torchvision>=0.23.0 numpy>=1.23.0 opencv-python-headles
 
 #### Clone the repository:
 git clone https://github.com/kgoertle/YOLO4r.git
+cd ~/path/to/YOLO4r
 
 ### Prerequisites
 - Must use Python 3.10 or older.
@@ -53,7 +125,6 @@ git clone https://github.com/kgoertle/YOLO4r.git
 #### Designed to allow users to debug training operation:
 - python train.py --test 
 
-
 ### Initiate Detection
 #### Defaults to mostly recently trained model and initiates usb0:
 - python detect.py
@@ -63,15 +134,3 @@ git clone https://github.com/kgoertle/YOLO4r.git
 
 #### Designed to allow users to route to debug model:
 - python detect.py --test 
-
-
-
-
-
-
-
-
-
-
-
-
