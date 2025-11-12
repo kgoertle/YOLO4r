@@ -1,6 +1,6 @@
 # YOLO4r
-You Only Look Once For Research
-Automated Animal Behavior Detection Pipeline
+**You Only Look Once For Research**
+An open-source, automated animal-behavior detection pipeline. 
 
 ## Overview
 YOLO4r (beta-6.0) is a YOLO by Ultralytics-based pipeline developing to allow researchers to design custom deep-learning models for accessible detection and measurement of animal behaviors. There is a current developmental focus on house sparrows for our own use-case. The pipeline supports custom dataset training, multiple video inputs and camera feeds processed in parallel, logs detection counts and interactions, and exports structured metrics for analysis. 
@@ -62,6 +62,7 @@ git clone https://github.com/kgoertle/YOLO4r.git
 
 #### Designed to allow users to route to debug model:
 - python detect.py --test 
+
 
 
 
