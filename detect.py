@@ -5,13 +5,13 @@ import numpy as np
 from ultralytics import YOLO
 
 # ---- UTILITIES ----
-from utils.detect_test.paths import get_runs_dir, get_output_folder
-from utils.detect_test.video_rotation import get_rotation_angle, rotate_frame
-from utils.detect_test.arg_parser import parse_arguments
-from utils.detect_test.printer import Printer
-from utils.detect_test.measurements import MeasurementConfig, Counter, Interactions, Aggregator, compute_counts_from_boxes
-from utils.detect_test.classes_config import initialize_classes
-from utils.detect_test.video_metadata import extract_video_metadata, parse_creation_time
+from utils.detect.paths import get_runs_dir, get_output_folder
+from utils.detect.video_rotation import get_rotation_angle, rotate_frame
+from utils.detect.arg_parser import parse_arguments
+from utils.detect.printer import Printer
+from utils.detect.measurements import MeasurementConfig, Counter, Interactions, Aggregator, compute_counts_from_boxes
+from utils.detect.classes_config import initialize_classes
+from utils.detect.video_metadata import extract_video_metadata, parse_creation_time
 
 # ------ GLOBALS ------
 BASE_DIR = Path(__file__).resolve().parent
@@ -322,7 +322,14 @@ def main():
     except KeyboardInterrupt:
         printer.stop_signal_received(single_thread=(len(threads) == 1))
         stop_event.set()
-        for t in threads: t.join(timeout=2)
+        # Robust join loop: safely waits for threads to exit
+        for t in threads:
+            while t.is_alive():
+                try:
+                    t.join(timeout=0.5)
+                except KeyboardInterrupt:
+                    # Ignore repeated Ctrl+C while waiting
+                    continue
 
     printer.release_all_writers()
     printer.all_threads_terminated()
