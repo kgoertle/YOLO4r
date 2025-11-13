@@ -262,6 +262,7 @@ def main():
     args = parse_arguments()
     printer = Printer(total_sources=len(args.sources))
 
+    # ---- MODEL SELECTION ----
     runs_dir = get_runs_dir(test=args.test)
     model_dirs = sorted([d for d in runs_dir.iterdir() if d.is_dir()], reverse=True)
     if not model_dirs:
@@ -269,16 +270,35 @@ def main():
         sys.exit(1)
 
     selected_model = model_dirs[0] if len(model_dirs) == 1 else printer.prompt_model_selection(runs_dir)
-    if not selected_model: sys.exit(1)
+    if not selected_model:
+        sys.exit(1)
 
-    weights_path = selected_model / "weights" / "best.pt"
-    if not weights_path.exists():
+    # Allow prompt to return a .pt file directly
+    selected_model = Path(selected_model)
+    if selected_model.suffix == ".pt":
+        weights_path = selected_model
+    else:
+        candidate = selected_model / "weights" / "best.pt"
+        if candidate.exists() and candidate.is_file():
+            weights_path = candidate
+        else:
+            # Fallback: try to find any .pt inside the model folder (e.g. last.pt)
+            pt_files = sorted(selected_model.rglob("*.pt"), key=lambda p: p.stat().st_mtime, reverse=True)
+            if pt_files:
+                weights_path = pt_files[0]
+                printer.warn(f"No best.pt found; using latest .pt file: {weights_path.name}")
+            else:
+                printer.missing_weights(selected_model)
+                sys.exit(1)
+
+    if not weights_path.exists() or weights_path.stat().st_size == 0:
         printer.missing_weights(selected_model)
         sys.exit(1)
 
     dataset_data_yaml = get_model_data_yaml(selected_model, printer)
     if dataset_data_yaml is None:
         sys.exit(1)
+
 
     processors = []
     for idx, src in enumerate(args.sources, start=1):
