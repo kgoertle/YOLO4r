@@ -5,7 +5,7 @@ import numpy as np
 from ultralytics import YOLO
 
 # ---- UTILITIES ----
-from utils.detect.paths import get_runs_dir, get_output_folder
+from utils.detect.paths import get_runs_dir, get_output_folder, get_model_data_yaml
 from utils.detect.video_rotation import get_rotation_angle, rotate_frame
 from utils.detect.arg_parser import parse_arguments
 from utils.detect.printer import Printer
@@ -28,7 +28,7 @@ class VideoProcessor:
         self.total_sources = total_sources
         self.printer = printer
         self.test = test
-        self.data_yaml_path = data_yaml_path
+        self.data_yaml_path = data_yaml_path  # <-- store YAML path
 
         self.is_camera = source_type == "usb"
         self.source_display_name = Path(source).stem if not self.is_camera else f"usb{source}"
@@ -71,6 +71,15 @@ class VideoProcessor:
             self.is_obb_model = False
             self.printer.info("Standard YOLO model assumed.")
 
+        # ---- Initialize classes ----
+        if self.data_yaml_path and Path(self.data_yaml_path).exists():
+            initialize_classes(data_yaml_path=self.data_yaml_path)
+        else:
+            # fallback: check model folder first
+            model_folder = self.weights_path.parent.parent
+            model_yaml = get_model_data_yaml(model_folder, self.printer)
+            initialize_classes(data_yaml_path=model_yaml)
+
         # ---- Video metadata ----
         metadata = extract_video_metadata(self.source) if not self.is_camera else {
             "type": "camera", "source": str(self.source), "creation_time": datetime.now().isoformat()
@@ -90,9 +99,6 @@ class VideoProcessor:
         # Save metadata
         with open(self.metadata_file, "w") as f:
             json.dump(metadata, f, indent=2)
-
-        # ---- Initialize classes ----
-        initialize_classes(data_yaml_path=self.data_yaml_path)
 
         # ---- Open video capture ----
         self.cap = cv2.VideoCapture(
@@ -295,8 +301,11 @@ def main():
         printer.missing_weights(selected_model)
         sys.exit(1)
 
-    dataset_data_yaml = selected_model / "data.yaml"
-    if not dataset_data_yaml.exists(): dataset_data_yaml = None
+    # Always get latest dataset YAML from data/ folder
+    dataset_data_yaml = get_model_data_yaml(selected_model, printer)
+    if dataset_data_yaml is None:
+        printer.error("No valid dataset YAML found in data/ folder.")
+        sys.exit(1)
 
     processors = []
     for idx, src in enumerate(args.sources, start=1):
