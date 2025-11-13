@@ -6,13 +6,6 @@ from datetime import datetime
 import yaml
 
 def process_labelstudio_project(project_folder: Path, data_root: Path, train_pct: float = 0.8):
-    """
-    Detect and prepare a freshly exported Label Studio project folder.
-    Returns the path to the processed dataset folder and the path to data.yaml.
-    The dataset structure follows YOLO conventions: 
-        train/images, train/labels, val/images, val/labels
-    """
-
     project_folder = Path(project_folder).resolve()
     data_root = Path(data_root).resolve()
 
