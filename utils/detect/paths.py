@@ -34,6 +34,40 @@ def select_model_run(base_path, printer=None, choice_index=None, auto_select=Fal
             printer.model_selected_info(selected.name) 
         return selected / "weights" / "best.pt"
 
+# ------ DATASET HANDLING ------
+DATA_DIR = BASE_DIR / "data"
+
+def get_latest_dataset_yaml(printer=None):
+    if not DATA_DIR.exists():
+        if printer:
+            printer.warn(f"Data directory {DATA_DIR} does not exist.")
+        return None
+
+    dataset_dirs = [d for d in DATA_DIR.iterdir() if d.is_dir()]
+    if not dataset_dirs:
+        if printer:
+            printer.warn(f"No dataset folders found in {DATA_DIR}.")
+        return None
+
+    # Sort by modification time, descending (latest first)
+    latest_dataset = sorted(dataset_dirs, key=lambda d: d.stat().st_mtime, reverse=True)[0]
+    data_yaml = latest_dataset / "data.yaml"
+
+    if not data_yaml.exists():
+        if printer:
+            printer.warn(f"No data.yaml found in latest dataset {latest_dataset}.")
+        return None
+
+    return data_yaml
+
+def get_model_data_yaml(model_folder: Path, printer=None):
+    """Return the data.yaml stored with the model, or fallback to latest dataset."""
+    model_yaml = model_folder / "data.yaml"
+    if model_yaml.exists():
+        return model_yaml
+    # fallback
+    return get_latest_dataset_yaml(printer)
+
 def get_output_folder(weights_path, source_type, source_name, test_detect=False, base_time=None):
     weights_path = Path(weights_path)
     train_folder = weights_path.parent.parent
