@@ -1,5 +1,4 @@
-import sys
-import time
+import sys, time, shutil
 from pathlib import Path
 from datetime import datetime
 from ultralytics import YOLO
@@ -39,13 +38,21 @@ def train_yolo(args, mode="train", checkpoint=None, resume_flag=False):
 
     # ---- Update mode image check ----
     if mode == "update":
-        logs_root = get_training_paths(args.DATA_YAML.parent, test=args.test)["logs_root"]
+        # Point to dataset-specific logs folder
+        paths = get_training_paths(args.DATA_YAML.parent, test=args.test)
+        dataset_name = args.dataset_folder.name
+        logs_root = paths["logs_root"] / dataset_name
+
+        # Load latest metadata.json
         prev_meta = load_latest_metadata(logs_root)
         prev_total = prev_meta.get("total_images_used", 0) if prev_meta else 0
+
+        # Compute new images
         new_imgs = total_imgs - prev_total
         if new_imgs <= 0:
             print("[INFO] No new images detected. Skipping training.")
             return
+
         print(f"[INFO] {new_imgs} new images detected. Proceeding with update.")
 
     # ---- Model selection (scratch / transfer / update) ----
@@ -68,8 +75,14 @@ def train_yolo(args, mode="train", checkpoint=None, resume_flag=False):
     run_name = args.name or timestamp
 
     paths = get_training_paths(args.DATA_YAML.parent, test=args.test)
+
+    # Run folders go directly under runs_root/logs_root
     run_folder = paths["runs_root"] / run_name
     log_dir = paths["logs_root"] / run_name
+
+    # Ensure folders exist
+    run_folder.mkdir(parents=True, exist_ok=True)
+    log_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"[INFO] Initializing model from {'scratch' if not use_pretrained else 'weights'}: {model_source}")
     model = YOLO(model_source)
