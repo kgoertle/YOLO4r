@@ -94,16 +94,23 @@ Integrates a **clean, timestamped log structure** for both camera feeds & videos
 ## Installation
 #### 1. Install MiniConda or Conda:
 `https://www.anaconda.com/docs/getting-started/miniconda/main`
+
 `https://www.anaconda.com/download`
 
-#### 2. Create and activate environment using:
+#### 2. Create & activate environment using:
 `conda create -n YOLO4r python=3.10`
 
-#### 3. Ensure Python wheels and installation tools are updated:
+`conda activate YOLO4r`
+
+`cd ~/YOLO4r`
+
+#### 3. Ensure Python wheels & installation tools are updated:
 `python -m pip install --upgrade pip setuptools wheel`
 
 #### 4. Install the library dependencies:
 `pip install -r requirements.txt`
+
+**Ensure that you are within the YOLO4r directory & environment BEFORE installation!**
 
 #### 5. Clone the repository:
 `git clone https://github.com/kgoertle/YOLO4r.git`
@@ -111,40 +118,52 @@ Integrates a **clean, timestamped log structure** for both camera feeds & videos
 
 ### Prerequisites
 - Must use `Python 3.10` or older.
-- Keep in mind, training and detection require entirely separate system requirements.
+- Keep in mind, training & detection require entirely separate system requirements.
 - A computer with a relatively powerful CPU or has a GPU with `CUDA enabled` is required.
 
 ## Execution
 ### Initiate Training
-#### - Transfer-learning from custom dataset:
-`python train.py --weights`
-Option to specify weights from either OBB or standard YOLO11 model.
+#### - Transfer-learning by default:
+`python train.py`
+
+**Option to specify weights from either OBB or standard YOLO11 model:**
+`python train.py --weights (yolo11n.pt OR yolo11n-obb.pt)`
+
+This will default to using YOLO11n.pt if not specified.
+
+**Option to name the model:**
+`python train.py --name`
+
+**Option to specify dataset within `data` folder.**
+`python train.py --dataset`
+
+This will default to the most recent dataset within the /data folder.
 
 #### - Update the most recently trained model:
 `python train.py --update`
 
+This refers to the most recent `best.pt` file to train from **IF there are new images found in the dataset folder**.
+
 #### - Train a model only from custom dataset:
-`python train.py --scratch --model`
-Option to specify model architecture when training from scratch.
+`python train.py --scratch `
 
-#### - Name your model:
-`python train.py --name`
+**Option to specify weights from either OBB or standard YOLO11 model.**
+`python train.py --scratch --model (yolo11.yaml OR yolo11-obb.yaml)`
 
-#### - Include a specific model, weights, dataset:
-`python train.py --dataset`
-Option to specify dataset within `data` folder.
+This will default to YOLO11.yaml if not specified.
 
 #### - Designed to allow users to debug training operation:
 `python train.py --test`
 
 ### Initiate Detection
-#### - Defaults to mostly recently trained model and initiates usb0:
+#### - Defaults to mostly recently trained model & initiates usb0:
 `python detect.py`
 
 #### - Initiate multiple sources in parallel:
 `python detect.py usb0 usb1 "video1.type" "video2.type"`
 
 #### - Designed to allow users to route to debug model:
-`python detect.py --test `
+`python detect.py --test`
+
 
 
