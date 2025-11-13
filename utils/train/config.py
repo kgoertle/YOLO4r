@@ -11,8 +11,8 @@ BASE_DIR = Path(os.getenv("YOLO_BASE_DIR", Path.cwd()))
 def get_training_paths(dataset_folder: Path, test=False):
     """Return key directory paths for training and logging based on dataset folder."""
     return {
-        "runs_root": BASE_DIR / "runs" / ("test" if test else "main"),
-        "logs_root": BASE_DIR / "logs" / ("test" if test else "main"),
+        "runs_root": BASE_DIR / "runs" / "test" if test else BASE_DIR / "runs",
+        "logs_root": BASE_DIR / "logs" / "test" if test else BASE_DIR / "logs",
         "train_folder": dataset_folder / "train/images",
         "val_folder": dataset_folder / "val/images",
         "weights_folder": BASE_DIR / "weights",
@@ -64,15 +64,18 @@ def get_args():
     if args.model and not args.model.endswith(".yaml"):
         print("[ERROR] --model file must end with .yaml")
         sys.exit(1)
+    if args.update and args.model:
+        print("[ERROR] --update cannot be used with a custom --model YAML.")
+        sys.exit(1)
+    if args.update and args.weights and not args.weights.exists():
+        print("[ERROR] --update requires the original run weights to exist.")
+        sys.exit(1)
+
 
     # ---- Ensure data folder exists ----
     data_root = BASE_DIR / "data"
     data_root.mkdir(exist_ok=True)
 
-    # Ensure all essential folders exist
-    paths["weights_folder"].mkdir(parents=True, exist_ok=True)
-    paths["models_folder"].mkdir(parents=True, exist_ok=True)
-    
     # ---- Detect Label Studio projects in BASE_DIR if dataset not specified ----
     dataset_folder = None
     if args.dataset:
@@ -107,6 +110,10 @@ def get_args():
     # ---- Resolve paths dynamically ----
     paths = get_training_paths(dataset_folder, test=args.test)
 
+    # Ensure all essential folders exist
+    paths["weights_folder"].mkdir(parents=True, exist_ok=True)
+    paths["models_folder"].mkdir(parents=True, exist_ok=True)
+
     # ---- Weights handling ----
     if args.weights:
         weights_path = Path(args.weights)
@@ -134,4 +141,3 @@ def get_args():
     args.dataset_folder = dataset_folder
 
     return args, mode
-
