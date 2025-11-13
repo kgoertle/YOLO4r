@@ -114,5 +114,6 @@ def get_output_folder(weights_path, source_type, source_name, test_detect=False,
         "counts": counts_folder,
         "frame-counts": frame_counts_folder,
         "interactions": interactions_folder,
-        "metadata": metadata_file
+        "metadata": metadata_file,
+        "safe_name": safe_name, 
     }
