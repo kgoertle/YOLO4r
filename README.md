@@ -4,7 +4,7 @@
 An open-source, automated animal-behavior detection pipeline.
 
 ## Overview
-**YOLO4r (beta-7.1)** is a research-oriented, Ultralytics-based pipeline designed to make custom deep-learning model training & behavioral detection accessible to field & laboratory researchers.  
+**YOLO4r (beta-7.5)** is a research-oriented, Ultralytics-based pipeline designed to make custom deep-learning model training & behavioral detection accessible to field & laboratory researchers.  
 
 **YOLO4r supports:**
 
@@ -92,17 +92,18 @@ Integrates a **clean, timestamped log structure** for both camera feeds & videos
 - Each source has its own **isolated measurement subdirectory**.  
 
 ## Installation
-#### 1. Create the Python virtual environment:
-`python -m venv --system-site-packages ~/yolo4r`
+#### 1. Install MiniConda or Conda:
+`https://www.anaconda.com/docs/getting-started/miniconda/main`
+`https://www.anaconda.com/download`
 
-#### 2. Activate it using:
-`source ~/yolo4r/bin/activate`
+#### 2. Create and activate environment using:
+`conda create -n YOLO4r python=3.10`
 
 #### 3. Ensure Python wheels and installation tools are updated:
 `python -m pip install --upgrade pip setuptools wheel`
 
 #### 4. Install the library dependencies:
-`pip install torch>=2.8.0 torchvision>=0.23.0 numpy>=1.23.0 opencv-python-headless>=4.7.0 Pillow>=10.0.1 matplotlib>=3.6.3 pandas>=1.5.3 pyyaml>=6.0.0 tqdm>=4.64.1 ultralytics==8.3.184 ultralytics-thop>=2.0.16 wandb>=0.21.1 psutil>=5.9.5 seaborn>=0.13.0`
+`pip install -r requirements.txt`
 
 #### 5. Clone the repository:
 `git clone https://github.com/kgoertle/YOLO4r.git`
@@ -145,4 +146,5 @@ Option to specify dataset within `data` folder.
 
 #### - Designed to allow users to route to debug model:
 `python detect.py --test `
+
 
