@@ -126,34 +126,47 @@ Integrates a **clean, timestamped log structure** for both camera feeds & videos
 #### - Transfer-learning by default:
 `python train.py`
 
+
 **Option to specify weights from either OBB or standard YOLO11 model:**
+
 `python train.py --weights (yolo11n.pt OR yolo11n-obb.pt)`
 
-This will default to using YOLO11n.pt if not specified.
+This will **default** to using YOLO11n.pt if not specified.
+
 
 **Option to name the model:**
+
 `python train.py --name`
 
 **Option to specify dataset within `data` folder.**
+
 `python train.py --dataset`
 
-This will default to the most recent dataset within the /data folder.
+This will **default** to the most recent dataset within the /data folder.
+
+
 
 #### - Update the most recently trained model:
+
 `python train.py --update`
 
 This refers to the most recent `best.pt` file to train from **IF there are new images found in the dataset folder**.
+
 
 #### - Train a model only from custom dataset:
 `python train.py --scratch `
 
 **Option to specify weights from either OBB or standard YOLO11 model.**
+
 `python train.py --scratch --model (yolo11.yaml OR yolo11-obb.yaml)`
 
-This will default to YOLO11.yaml if not specified.
+This will **default** to YOLO11.yaml if not specified.
+
 
 #### - Designed to allow users to debug training operation:
 `python train.py --test`
+
+
 
 ### Initiate Detection
 #### - Defaults to mostly recently trained model & initiates usb0:
@@ -164,6 +177,7 @@ This will default to YOLO11.yaml if not specified.
 
 #### - Designed to allow users to route to debug model:
 `python detect.py --test`
+
 
 
 
