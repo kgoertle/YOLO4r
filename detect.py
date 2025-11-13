@@ -6,7 +6,6 @@ from ultralytics import YOLO
 
 # ---- UTILITIES ----
 from utils.detect.paths import get_runs_dir, get_output_folder, get_model_data_yaml
-from utils.detect.video_rotation import get_rotation_angle, rotate_frame
 from utils.detect.arg_parser import parse_arguments
 from utils.detect.printer import Printer
 from utils.detect.measurements import MeasurementConfig, Counter, Interactions, Aggregator, compute_counts_from_boxes
@@ -14,7 +13,6 @@ from utils.detect.classes_config import initialize_classes
 from utils.detect.video_metadata import extract_video_metadata, parse_creation_time
 
 # ------ GLOBALS ------
-BASE_DIR = Path(__file__).resolve().parent
 stop_event = threading.Event()
 IS_MAC, IS_LINUX = platform.system() == "Darwin", platform.system() == "Linux"
 
@@ -28,7 +26,7 @@ class VideoProcessor:
         self.total_sources = total_sources
         self.printer = printer
         self.test = test
-        self.data_yaml_path = data_yaml_path  # <-- store YAML path
+        self.data_yaml_path = data_yaml_path
 
         self.is_camera = source_type == "usb"
         self.source_display_name = Path(source).stem if not self.is_camera else f"usb{source}"
@@ -41,7 +39,6 @@ class VideoProcessor:
         self.is_obb_model = False
         self.cap = None
         self.out_writer = None
-        self.rotation_angle = 0
         self.config = MeasurementConfig()
         self.counter = None
         self.aggregator = None
@@ -60,22 +57,18 @@ class VideoProcessor:
             self.printer.model_fail(e)
             return False
 
-        # ---- Detect if model is OBB or standard ----
+        # ---- Detect if model is OBB ----
         try:
             dummy_frame = np.zeros((640, 640, 3), dtype=np.uint8)
             dummy_results = self.model.predict(dummy_frame, verbose=False, show=False)
-            if hasattr(dummy_results[0], "obb") and dummy_results[0].obb is not None:
-                self.is_obb_model = True
-            self.printer.info(f"{'OBB' if self.is_obb_model else 'Standard YOLO'} model detected.")
+            self.is_obb_model = hasattr(dummy_results[0], "obb") and dummy_results[0].obb is not None
         except Exception:
             self.is_obb_model = False
-            self.printer.info("Standard YOLO model assumed.")
 
         # ---- Initialize classes ----
         if self.data_yaml_path and Path(self.data_yaml_path).exists():
             initialize_classes(data_yaml_path=self.data_yaml_path)
         else:
-            # fallback: check model folder first
             model_folder = self.weights_path.parent.parent
             model_yaml = get_model_data_yaml(model_folder, self.printer)
             initialize_classes(data_yaml_path=model_yaml)
@@ -84,19 +77,18 @@ class VideoProcessor:
         metadata = extract_video_metadata(self.source) if not self.is_camera else {
             "type": "camera", "source": str(self.source), "creation_time": datetime.now().isoformat()
         }
-        self.creation_dt = parse_creation_time(metadata)
-        metadata["creation_time_str"] = self.creation_dt.strftime("%H:%M:%S") if self.creation_dt else "00:00:00"
+        self.start_time = parse_creation_time(metadata) or datetime.now()
+        metadata["creation_time_str"] = self.start_time.strftime("%H:%M:%S")
 
         # ---- Output paths ----
         self.paths = get_output_folder(
             self.weights_path, self.source_type,
             self.source if not self.is_camera else f"usb{self.source}",
-            test_detect=self.test, base_time=self.creation_dt if not self.is_camera else None
+            test_detect=self.test, base_time=self.start_time if not self.is_camera else None
         )
-        self.out_file = self.paths["video_folder"] / f"{self.source_display_name}.mp4"
+        self.out_file = self.paths["video_folder"] / f"{self.paths['safe_name']}.mp4"
         self.metadata_file = self.paths["metadata"]
 
-        # Save metadata
         with open(self.metadata_file, "w") as f:
             json.dump(metadata, f, indent=2)
 
@@ -110,10 +102,7 @@ class VideoProcessor:
             self.printer.open_capture_fail(self.source_display_name)
             return False
 
-        # ---- Get rotation for files only ----
-        self.rotation_angle = get_rotation_angle(self.source) if not self.is_camera else 0
-
-        # ---- Determine frame width & height safely ----
+        # ---- Frame dimensions ----
         if self.is_camera:
             self.frame_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 640
             self.frame_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 480
@@ -122,8 +111,6 @@ class VideoProcessor:
             if not ret or frame is None:
                 self.printer.read_frame_fail(self.source_display_name)
                 return False
-            if self.rotation_angle in [90, 180, 270]:
-                frame = rotate_frame(frame, self.rotation_angle)
             self.frame_height, self.frame_width = frame.shape[:2]
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
@@ -132,9 +119,6 @@ class VideoProcessor:
         if self.fps_video <= 0 or np.isnan(self.fps_video):
             self.fps_video = 20.0
         self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0) if not self.is_camera else None
-
-        # ---- Start time ----
-        self.start_time = self.creation_dt if self.creation_dt else datetime.now()
 
         # ---- Video writer ----
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
@@ -145,7 +129,6 @@ class VideoProcessor:
             (self.frame_width, self.frame_height)
         )
         if not self.out_writer.isOpened():
-            self.printer.error(f"Failed to open VideoWriter for {self.out_file}")
             return False
 
         self.printer.register_writer(
@@ -153,7 +136,7 @@ class VideoProcessor:
             display_name=self.source_display_name
         )
 
-        # ---- Measurements ----
+        # ---- Measurement objects ----
         self.counter = Counter(out_folder=self.paths["counts"], config=self.config, start_time=self.start_time)
         self.aggregator = Aggregator(out_folder=self.paths["frame-counts"], config=self.config, start_time=self.start_time)
         self.interactions = Interactions(out_folder=self.paths["interactions"], config=self.config, start_time=self.start_time)
@@ -161,13 +144,11 @@ class VideoProcessor:
         return True
 
     def start_reader(self):
-        """Camera-safe frame reader thread"""
         def read_frames():
             while not self.stop_reader.is_set():
                 try:
                     ret, frame = self.cap.read()
                 except Exception as e:
-                    self.printer.warn(f"VideoCapture read failed: {e}")
                     ret, frame = False, None
 
                 if not ret or frame is None:
@@ -177,9 +158,7 @@ class VideoProcessor:
                     time.sleep(0.05)
                     continue
 
-                if hasattr(self, "frame_width") and hasattr(self, "frame_height"):
-                    frame = cv2.resize(frame, (self.frame_width, self.frame_height))
-
+                frame = cv2.resize(frame, (self.frame_width, self.frame_height))
                 try:
                     self.frame_queue.put(frame, timeout=0.1)
                 except queue.Full:
@@ -205,9 +184,6 @@ class VideoProcessor:
                         break
                     continue
 
-                if self.rotation_angle in [90, 180, 270]:
-                    frame = rotate_frame(frame, self.rotation_angle)
-
                 # ---- Inference ----
                 try:
                     results = self.model.predict(frame, verbose=False, show=False, imgsz=640)
@@ -221,12 +197,11 @@ class VideoProcessor:
                     self.printer.inference_fail(self.source_display_name, e)
                     annotated_frame = frame
 
-                # ---- Unified box extraction for OBB or standard YOLO ----
+                # ---- Box extraction ----
                 current_boxes_list, names = [], {}
                 if results and len(results) > 0:
                     res = results[0]
                     names = res.names
-
                     if self.is_obb_model and hasattr(res, "obb") and res.obb is not None:
                         boxes = res.obb.xywhr.cpu().numpy()
                         classes = res.obb.cls.cpu().numpy()
@@ -241,8 +216,8 @@ class VideoProcessor:
                         ]
 
                 video_time = self.start_time + timedelta(seconds=frame_count / self.fps_video)
-
                 counts = compute_counts_from_boxes(current_boxes_list, names)
+
                 self.counter.update_counts(current_boxes_list, names, timestamp=video_time)
                 self.aggregator.push_frame_data(video_time, counts_dict=counts)
                 self.interactions.process_frame(current_boxes_list, names, video_time)
@@ -262,10 +237,11 @@ class VideoProcessor:
 
         finally:
             self.stop_reader.set()
-            if hasattr(self, "cap") and self.cap:
+            if self.cap:
                 try: self.cap.release()
                 except Exception: pass
-            if self.reader_thread: self.reader_thread.join()
+            if self.reader_thread:
+                self.reader_thread.join()
 
             saved_files = [self.out_file, self.metadata_file]
             counter_files = self.counter.save_results()
@@ -288,7 +264,6 @@ def main():
 
     runs_dir = get_runs_dir(test=args.test)
     model_dirs = sorted([d for d in runs_dir.iterdir() if d.is_dir()], reverse=True)
-
     if not model_dirs:
         printer.missing_weights(runs_dir)
         sys.exit(1)
@@ -301,10 +276,8 @@ def main():
         printer.missing_weights(selected_model)
         sys.exit(1)
 
-    # Always get latest dataset YAML from data/ folder
     dataset_data_yaml = get_model_data_yaml(selected_model, printer)
     if dataset_data_yaml is None:
-        printer.error("No valid dataset YAML found in data/ folder.")
         sys.exit(1)
 
     processors = []
@@ -331,13 +304,11 @@ def main():
     except KeyboardInterrupt:
         printer.stop_signal_received(single_thread=(len(threads) == 1))
         stop_event.set()
-        # Robust join loop: safely waits for threads to exit
         for t in threads:
             while t.is_alive():
                 try:
                     t.join(timeout=0.5)
                 except KeyboardInterrupt:
-                    # Ignore repeated Ctrl+C while waiting
                     continue
 
     printer.release_all_writers()
