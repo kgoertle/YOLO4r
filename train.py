@@ -1,4 +1,4 @@
-import sys, time, shutil
+import sys, time, shutil, wandb
 from pathlib import Path
 from datetime import datetime
 from ultralytics import YOLO
@@ -15,7 +15,6 @@ from utils.train import (
     parse_results,
     save_quick_summary,
     save_metadata,
-    process_labelstudio_project,
     init_wandb
 )
 
@@ -29,7 +28,7 @@ def train_yolo(args, mode="train", checkpoint=None, resume_flag=False):
         return
 
     reset_weights = mode == "scratch"
-    epochs, imgsz = (10, 640) if args.test else (120, 640)
+    epochs, imgsz = (10, 640) if args.test else (3, 640)
     if reset_weights and not args.test:
         epochs = 150
 
@@ -81,7 +80,6 @@ def train_yolo(args, mode="train", checkpoint=None, resume_flag=False):
     log_dir = paths["logs_root"] / run_name
 
     # Ensure folders exist
-    run_folder.mkdir(parents=True, exist_ok=True)
     log_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"[INFO] Initializing model from {'scratch' if not use_pretrained else 'weights'}: {model_source}")
@@ -110,7 +108,7 @@ def train_yolo(args, mode="train", checkpoint=None, resume_flag=False):
             exist_ok=False,
             pretrained=use_pretrained,
             device=device,
-            augment=True,
+            augment=False,
             mosaic=False,
             mixup=True,
             fliplr=0.5,
@@ -120,7 +118,7 @@ def train_yolo(args, mode="train", checkpoint=None, resume_flag=False):
             hsv_v=0.4,
             degrees=0.0,
             translate=0.1,
-            plots=True,
+            plots=False,
             verbose=False,
             show=True,
             show_labels=True,
@@ -141,6 +139,13 @@ def train_yolo(args, mode="train", checkpoint=None, resume_flag=False):
         save_metadata(log_dir, mode, epochs, new_imgs, total_imgs)
     except Exception as e:
         print(f"[ERROR] Failed to save post-training metadata: {e}")
+    
+    try:
+        if wandb.run:
+            wandb.finish()
+            print("[INFO] W&B run finalized cleanly.")
+    except Exception as e:
+        print(f"[WARN] Could not close W&B run cleanly: {e}")
 
     # ---- Copy data.yaml into model run folder ----
     try:
@@ -177,4 +182,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
