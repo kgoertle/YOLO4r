@@ -5,7 +5,7 @@ import re
 BASE_DIR = Path(__file__).resolve().parents[2]
 
 # ------ DIRECTORIES ------
-RUNS_DIR_MAIN = BASE_DIR / "runs/main"
+RUNS_DIR_MAIN = BASE_DIR / "runs"
 RUNS_DIR_TEST = BASE_DIR / "runs/test"
 
 def get_runs_dir(test=False):
