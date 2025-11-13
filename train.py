@@ -111,7 +111,7 @@ def train_yolo(args, mode="train", checkpoint=None, resume_flag=False):
             pretrained=use_pretrained,
             device=device,
             augment=True,
-            mosaic=True,
+            mosaic=False,
             mixup=True,
             fliplr=0.5,
             flipud=0.0,
@@ -177,3 +177,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
