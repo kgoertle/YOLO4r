@@ -74,19 +74,28 @@ class Printer:
     def exit(self, message): self._emit("[EXIT]", message)
 
     # ------ Dedicated Messages ------
-    def prompt_model_selection(self, runs_dir):
-        model_dirs = sorted([d for d in runs_dir.iterdir() if d.is_dir()], reverse=True)
+    def prompt_model_selection(self, runs_dir, exclude_test=False):
+        """Prompt user to select a model run. Optionally exclude 'test' folder."""
+        model_dirs = sorted(
+            [d for d in runs_dir.iterdir() if d.is_dir() and (not exclude_test or d.name.lower() != "test")],
+            reverse=True
+        )
         if not model_dirs:
             self.missing_weights(runs_dir)
             return None
         self.model_prompt(model_dirs)
         while True:
-            choice = input(f"Select a model run (1-{len(model_dirs)}): ")
+            try:
+                choice = input(f"Select a model run (1-{len(model_dirs)}): ")
+            except KeyboardInterrupt:
+                self.warn("Model selection interrupted by user. Exiting.")
+                return None
+
             if choice.isdigit() and 1 <= int(choice) <= len(model_dirs):
                 selected = model_dirs[int(choice) - 1]
                 return selected / "weights" / "best.pt"
             else:
-                self.warn("Invalid selection, try again.")
+                self.info("Invalid selection, try again.")
     def missing_weights(self, runs_dir):
         self.error(f"No valid best.pt found in {runs_dir}. Please train a model first or place weights in the folder.")
     def model_init(self, weights_path):
