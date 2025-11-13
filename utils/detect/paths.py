@@ -1,119 +1,187 @@
-from pathlib import Path
-from datetime import datetime
+import threading
+import os
 import re
+from pathlib import Path
+import time
+from utils.detect.classes_config import FOCUS_CLASSES, CONTEXT_CLASSES
 
-BASE_DIR = Path(__file__).resolve().parents[2]
+# ------ CENTRALIZED TERMINAL LOGGER ------
+class Printer:
+    def __init__(self, total_sources):
+        self.total_sources = total_sources
+        self.lock = threading.Lock()
+        self.lines = [""] * total_sources
+        self.active_writers = {}
 
-# ------ DIRECTORIES ------
-RUNS_DIR_MAIN = BASE_DIR / "runs"
-RUNS_DIR_TEST = BASE_DIR / "runs/test"
+        try:
+            self.term_height = os.get_terminal_size().lines
+        except OSError:
+            self.term_height = 30
 
-def get_runs_dir(test=False):
-    """Return Path to runs directory based on mode."""
-    return RUNS_DIR_TEST if test else RUNS_DIR_MAIN
+        self.start_line = max(1, self.term_height - total_sources + 1)
 
-def select_model_run(base_path, printer=None, choice_index=None, auto_select=False):
-    """Return path to best.pt, auto-selecting latest or using choice_index."""
-    base_path = Path(base_path)
-    if not base_path.exists():
-        return None
+    # ------ Terminal Update Core ------
+    def update_line(self, line_number, text):
+        with self.lock:
+            if self.lines[line_number - 1] != text:
+                self.lines[line_number - 1] = text
+                print(f"\033[{self.start_line + line_number - 1};0H\033[K{text}", end="", flush=True)
 
-    model_dirs = sorted([d for d in base_path.iterdir() if d.is_dir()], reverse=True)
-    if not model_dirs:
-        return None
+    def _emit(self, tag, message):
+        with self.lock:
+            print(f"\033[{self.start_line + self.total_sources};0H\033[K{tag} {message}", flush=True)
 
-    if len(model_dirs) == 1 or auto_select:
-        selected = model_dirs[0]
-        if printer:
-            printer.model_selected_info(selected.name) 
-        return selected / "weights" / "best.pt"
+    # ------ Frame + Timing Utilities ------
+    def format_time_fps(self, frame_count, prev_time, start_time, fps_video=None, total_frames=None, source_type="video"):
+        current_time = time.time()
+        instantaneous_fps = 1 / (current_time - prev_time + 1e-6)
+        self.prev_fps_smooth = getattr(self, "prev_fps_smooth", instantaneous_fps)
+        fps_smooth = 0.9 * self.prev_fps_smooth + 0.1 * instantaneous_fps
+        self.prev_fps_smooth = fps_smooth
+        prev_time = current_time
 
-    if choice_index and 1 <= choice_index <= len(model_dirs):
-        selected = model_dirs[choice_index - 1]
-        if printer:
-            printer.model_selected_info(selected.name) 
-        return selected / "weights" / "best.pt"
+        if source_type == "video" and fps_video and total_frames:
+            elapsed_sec = int(frame_count / fps_video)
+            total_sec = int(total_frames / fps_video)
+            time_info = f"{elapsed_sec//60:02d}:{elapsed_sec%60:02d}/{total_sec//60:02d}:{total_sec%60:02d}"
+        else:
+            elapsed_sec = int(current_time - start_time)
+            time_info = f"{elapsed_sec//60:02d}:{elapsed_sec%60:02d}"
 
-# ------ DATASET HANDLING ------
-DATA_DIR = BASE_DIR / "data"
+        return fps_smooth, time_info, prev_time, None  # ETA is now always None
 
-def get_latest_dataset_yaml(printer=None):
-    if not DATA_DIR.exists():
-        if printer:
-            printer.warn(f"Data directory {DATA_DIR} does not exist.")
-        return None
+    def update_frame_status(self, line_number, display_name, frame_count, fps_smooth, counts, time_info):
+        counts_to_show = {cls: counts.get(cls, 0) for cls in FOCUS_CLASSES}
+        if CONTEXT_CLASSES:
+            objects_total = sum(counts.get(cls, 0) for cls in CONTEXT_CLASSES)
+            counts_to_show["Objects"] = objects_total
 
-    dataset_dirs = [d for d in DATA_DIR.iterdir() if d.is_dir()]
-    if not dataset_dirs:
-        if printer:
-            printer.warn(f"No dataset folders found in {DATA_DIR}.")
-        return None
+        count_parts = [f"{cls}:{counts_to_show.get(cls, 0)}" for cls in FOCUS_CLASSES]
+        if CONTEXT_CLASSES:
+            count_parts.append(f"Objects:{counts_to_show.get('Objects', 0)}")
 
-    # Sort by modification time, descending (latest first)
-    latest_dataset = sorted(dataset_dirs, key=lambda d: d.stat().st_mtime, reverse=True)[0]
-    data_yaml = latest_dataset / "data.yaml"
+        text = f"[{display_name}] Frames:{frame_count} | FPS:{fps_smooth:.1f} | " \
+               + " | ".join(count_parts) + f" | Time:{time_info}"
+        self.update_line(line_number, text)
 
-    if not data_yaml.exists():
-        if printer:
-            printer.warn(f"No data.yaml found in latest dataset {latest_dataset}.")
-        return None
+    # ------ Generic Logging ------
+    def info(self, message): self._emit("[INFO]", message)
+    def warn(self, message): self._emit("[WARN]", message)
+    def error(self, message): self._emit("[ERROR]", message)
+    def save(self, message_or_path):
+        msg = f"Saved to: {message_or_path}" if isinstance(message_or_path, (Path, str)) else str(message_or_path)
+        self._emit("[SAVE]", msg)
+    def exit(self, message): self._emit("[EXIT]", message)
 
-    return data_yaml
+    # ------ Dedicated Messages ------
+    def prompt_model_selection(self, runs_dir, exclude_test=False):
+        """Prompt user to select a model run. Optionally exclude 'test' folder."""
+        model_dirs = sorted(
+            [d for d in runs_dir.iterdir() if d.is_dir() and (not exclude_test or d.name.lower() != "test")],
+            reverse=True
+        )
+        if not model_dirs:
+            self.missing_weights(runs_dir)
+            return None
+        self.model_prompt(model_dirs)
+        while True:
+            try:
+                choice = input(f"Select a model run (1-{len(model_dirs)}): ")
+            except KeyboardInterrupt:
+                self.warn("Model selection interrupted by user. Exiting.")
+                return None
 
-def get_model_data_yaml(model_folder: Path, printer=None):
-    """Return the data.yaml stored with the model, or fallback to latest dataset."""
-    model_yaml = model_folder / "data.yaml"
-    if model_yaml.exists():
-        return model_yaml
-    # fallback
-    return get_latest_dataset_yaml(printer)
+            if choice.isdigit() and 1 <= int(choice) <= len(model_dirs):
+                selected = model_dirs[int(choice) - 1]
+                return selected / "weights" / "best.pt"
+            else:
+                self.info("Invalid selection, try again.")
+    def missing_weights(self, runs_dir):
+        self.error(f"No valid best.pt found in {runs_dir}. Please train a model first or place weights in the folder.")
+    def model_init(self, weights_path):
+        weights_path = Path(weights_path)
+        try:
+            runs_index = weights_path.parts.index("runs")
+            short_path = Path(*weights_path.parts[runs_index:runs_index+3])
+        except ValueError:
+            short_path = weights_path.parent.parent  # fallback: just two levels up
+        self.info(f"Initializing model: {short_path}")
+    def model_fail(self, e): self.error(f"Could not initialize model in thread: {e}")
+    def open_capture_fail(self, source_name): self.error(f"Could not open {source_name}!")
+    def read_frame_fail(self, source_name): self.error(f"Could not read frame from {source_name}")
+    def inference_fail(self, display_name, e): self.error(f"Inference failed for {display_name}: {e}")
+    def save_aggregator_csv(self, file_path): self.save(file_path)
+    def detection_complete(self, display_name): self.info(f"All detection outputs saved for {display_name}")
+    def stop_signal_received(self, single_thread=True):
+        msg = "Stop signal received. Terminating pipeline..." if single_thread else "Stop signal received. Terminating pipelines..."
+        self.exit(msg)
+    def skip_source(self, src):
+        self.warn(f"Skipping source: {src}")
+    def no_sources(self):
+        self.warn("No valid sources to process.")
+    def all_threads_terminated(self): self.exit("All detection threads safely terminated.")
 
-def get_output_folder(weights_path, source_type, source_name, test_detect=False, base_time=None):
-    weights_path = Path(weights_path)
-    train_folder = weights_path.parent.parent
-    model_timestamp = train_folder.name
-    logs_root = BASE_DIR / ("logs/test" if test_detect else "logs") / model_timestamp / "measurements"
+    # ------ Dedicated Model Selection ------
+    def model_prompt(self, model_dirs):
+        self._emit("[MODEL]", f"{len(model_dirs)} models found in runs folder:")
+        for i, d in enumerate(model_dirs, start=1):
+            print(f"{i}. {d.name}")
 
-    folder_time = base_time or datetime.now()
-    run_ts = folder_time.strftime("%m-%d-%Y_%H-%M-%S")
+    # ------ Recording initaliation ------
+    def recording_initialized(self, timestamp):
+        self._emit("[INFO]", f"Recording initialized at {timestamp}.")
 
-    # ------ Clean folder name ------
-    safe_name = re.sub(r'[^\w\-\.]', '_', Path(source_name).stem if source_type == "video" else source_name)
+    def save_measurements(self, base_dir, files):
+        base_dir = Path(base_dir)
+        try:
+            # find "measurements" folder in the path
+            meas_index = base_dir.parts.index("measurements")
+            short_path = Path(*base_dir.parts[meas_index:])
+        except ValueError:
+            short_path = base_dir  # fallback
 
-    if source_type == "video":
-        base_folder = logs_root / "video-in" / safe_name / run_ts
-    else:
-        base_folder = logs_root / "camera-feeds" / safe_name / run_ts
+        self._emit("[SAVE]", f'Measurements saved to: "{short_path}"')
+        if files:
+            for f in files:
+                print(f" - {Path(f).name}")
 
-    # Avoid overwriting
-    suffix = 1
-    original_base = base_folder
-    while base_folder.exists():
-        base_folder = original_base.parent / f"{run_ts}_{suffix}"
-        suffix += 1
 
-    # ------ Main folders ------
-    video_folder = base_folder / "recordings"
-    scores_folder = base_folder / "scores"
+    # ------ Writer Management ------
+    def register_writer(self, raw_source_name, writer, cap, source_type, out_file, display_name=None):
+        safe_name = re.sub(r'[^\w\-]', '_', Path(out_file.name).stem) + out_file.suffix
+        entry = {
+            'writer': writer,
+            'cap': cap,
+            'source_type': source_type,
+            'out_file': out_file,
+            'source_name': raw_source_name,
+            'display_name': display_name or raw_source_name
+        }
+        self.active_writers[safe_name] = entry
 
-    # ------ Measurement subfolders ------
-    counts_folder = scores_folder / "counts"
-    frame_counts_folder = scores_folder / "frame-counts"
-    interactions_folder = scores_folder / "interactions"
+        # --- Generate timestamp dynamically ---
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%m/%d/%Y %H:%M:%S")
+        self.recording_initialized(timestamp)
 
-    # Metadata file
-    metadata_file = scores_folder / f"{safe_name}_metadata.json"
+        return safe_name
 
-    # ------ Create directories ------
-    for folder in [video_folder, scores_folder, counts_folder, frame_counts_folder, interactions_folder]:
-        folder.mkdir(parents=True, exist_ok=True)
+    def safe_release_writer(self, raw_source_name):
+        entry = self.active_writers.get(raw_source_name)
+        if entry:
+            writer, cap = entry['writer'], entry['cap']
+            if writer:
+                try:
+                    writer.release()
+                except Exception:
+                    pass
+            if cap:
+                try:
+                    cap.release()
+                except Exception:
+                    pass
+            del self.active_writers[raw_source_name]
 
-    return {
-        "video_folder": video_folder,
-        "scores_folder": scores_folder,
-        "counts": counts_folder,
-        "frame-counts": frame_counts_folder,
-        "interactions": interactions_folder,
-        "metadata": metadata_file,
-        "safe_name": safe_name, 
-    }
+    def release_all_writers(self):
+        for name in list(self.active_writers.keys()):
+            self.safe_release_writer(name)
