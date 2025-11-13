@@ -93,12 +93,16 @@ class VideoProcessor:
             json.dump(metadata, f, indent=2)
 
         # ---- Open video capture ----
-        self.cap = cv2.VideoCapture(
-            int(self.source) if self.is_camera else str(self.source),
-            cv2.CAP_AVFOUNDATION if IS_MAC else cv2.CAP_V4L2 if IS_LINUX else 0
-        ) if self.is_camera else cv2.VideoCapture(str(self.source))
+        try:
+            self.cap = cv2.VideoCapture(
+                int(self.source) if self.is_camera else str(self.source),
+                cv2.CAP_AVFOUNDATION if IS_MAC else cv2.CAP_V4L2 if IS_LINUX else 0
+            ) if self.is_camera else cv2.VideoCapture(str(self.source))
 
-        if not self.cap or not self.cap.isOpened():
+            if not self.cap.isOpened():
+                self.printer.open_capture_fail(self.source_display_name)
+                return False
+        except Exception:
             self.printer.open_capture_fail(self.source_display_name)
             return False
 
@@ -116,7 +120,7 @@ class VideoProcessor:
 
         # ---- FPS & total frames ----
         self.fps_video = self.cap.get(cv2.CAP_PROP_FPS) if not self.is_camera else 20.0
-        if self.fps_video <= 0 or np.isnan(self.fps_video):
+        if not self.fps_video or self.fps_video <= 0 or np.isnan(self.fps_video):
             self.fps_video = 20.0
         self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0) if not self.is_camera else None
 
@@ -129,6 +133,7 @@ class VideoProcessor:
             (self.frame_width, self.frame_height)
         )
         if not self.out_writer.isOpened():
+            self.printer.warn(f"VideoWriter failed for {self.source_display_name}")
             return False
 
         self.printer.register_writer(
@@ -144,27 +149,26 @@ class VideoProcessor:
         return True
 
     def start_reader(self):
+        """Read frames safely for USB0 on macOS."""
         def read_frames():
             while not self.stop_reader.is_set():
+                ret, frame = False, None
                 try:
                     ret, frame = self.cap.read()
-                except Exception as e:
-                    ret, frame = False, None
+                except Exception:
+                    pass
 
-                if not ret or frame is None:
-                    if not self.is_camera:
-                        self.stop_reader.set()
-                        break
-                    time.sleep(0.05)
+                if not ret or frame is None or frame.size == 0:
+                    time.sleep(0.03)
                     continue
 
-                frame = cv2.resize(frame, (self.frame_width, self.frame_height))
+                # Push raw frame; do NOT resize here
                 try:
-                    self.frame_queue.put(frame, timeout=0.1)
+                    self.frame_queue.put_nowait(frame)
                 except queue.Full:
                     try:
                         self.frame_queue.get_nowait()
-                        self.frame_queue.put(frame, timeout=0.1)
+                        self.frame_queue.put_nowait(frame)
                     except queue.Empty:
                         pass
 
@@ -184,18 +188,16 @@ class VideoProcessor:
                         break
                     continue
 
+                # Resize here, in main thread, before inference
+                frame_resized = cv2.resize(frame, (self.frame_width, self.frame_height))
+
                 # ---- Inference ----
                 try:
-                    results = self.model.predict(frame, verbose=False, show=False, imgsz=640)
-                    annotated_frame = results[0].plot() if results and len(results) > 0 else frame
-                except KeyboardInterrupt:
-                    self.printer.stop_signal_received(single_thread=True)
-                    stop_event.set()
-                    annotated_frame = frame
-                    break
+                    results = self.model.predict(frame_resized, verbose=False, show=False, imgsz=640)
+                    annotated_frame = results[0].plot() if results and len(results) > 0 else frame_resized
                 except Exception as e:
                     self.printer.inference_fail(self.source_display_name, e)
-                    annotated_frame = frame
+                    annotated_frame = frame_resized
 
                 # ---- Box extraction ----
                 current_boxes_list, names = [], {}
@@ -237,11 +239,14 @@ class VideoProcessor:
 
         finally:
             self.stop_reader.set()
+            if self.reader_thread:
+                self.reader_thread.join()
             if self.cap:
                 try: self.cap.release()
                 except Exception: pass
-            if self.reader_thread:
-                self.reader_thread.join()
+            if self.out_writer:
+                try: self.out_writer.release()
+                except Exception: pass
 
             saved_files = [self.out_file, self.metadata_file]
             counter_files = self.counter.save_results()
@@ -256,7 +261,6 @@ class VideoProcessor:
             self.interactions.finalize()
             self.printer.save_measurements(self.paths["scores_folder"], saved_files)
 
-
 # ------ MAIN ENTRY ------
 def main():
     args = parse_arguments()
@@ -264,16 +268,27 @@ def main():
 
     # ---- MODEL SELECTION ----
     runs_dir = get_runs_dir(test=args.test)
-    model_dirs = sorted([d for d in runs_dir.iterdir() if d.is_dir()], reverse=True)
+
+    # List model directories, exclude 'test' unless test mode
+    model_dirs = sorted(
+        [d for d in runs_dir.iterdir() if d.is_dir() and (args.test or d.name.lower() != "test")],
+        reverse=True
+    )
+
     if not model_dirs:
         printer.missing_weights(runs_dir)
         sys.exit(1)
 
-    selected_model = model_dirs[0] if len(model_dirs) == 1 else printer.prompt_model_selection(runs_dir)
+    # Prompt user if multiple models exist
+    if len(model_dirs) == 1:
+        selected_model = model_dirs[0]
+    else:
+        selected_model = printer.prompt_model_selection(runs_dir, exclude_test=not args.test)
+
     if not selected_model:
         sys.exit(1)
 
-    # Allow prompt to return a .pt file directly
+    # Resolve weights
     selected_model = Path(selected_model)
     if selected_model.suffix == ".pt":
         weights_path = selected_model
@@ -282,7 +297,7 @@ def main():
         if candidate.exists() and candidate.is_file():
             weights_path = candidate
         else:
-            # Fallback: try to find any .pt inside the model folder (e.g. last.pt)
+            # fallback: use latest .pt in model folder
             pt_files = sorted(selected_model.rglob("*.pt"), key=lambda p: p.stat().st_mtime, reverse=True)
             if pt_files:
                 weights_path = pt_files[0]
@@ -295,10 +310,10 @@ def main():
         printer.missing_weights(selected_model)
         sys.exit(1)
 
+    # Load dataset YAML
     dataset_data_yaml = get_model_data_yaml(selected_model, printer)
     if dataset_data_yaml is None:
         sys.exit(1)
-
 
     processors = []
     for idx, src in enumerate(args.sources, start=1):
