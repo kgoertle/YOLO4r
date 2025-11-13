@@ -129,6 +129,16 @@ def train_yolo(args, mode="train", checkpoint=None, resume_flag=False):
     except Exception as e:
         print(f"[ERROR] Failed to save post-training metadata: {e}")
 
+    # ---- Copy data.yaml into model run folder ----
+    try:
+        run_weights_folder = run_folder / "weights"
+        run_weights_folder.mkdir(parents=True, exist_ok=True)
+        dst_yaml = run_folder / "data.yaml"
+        if not dst_yaml.exists():
+            shutil.copy(args.DATA_YAML, dst_yaml)
+            print(f"[INFO] Copied dataset YAML to model folder: {dst_yaml}")
+    except Exception as e:
+        print(f"[WARN] Could not copy data.yaml to model folder: {e}")
 
 # ------ MAIN ENTRY ------
 def main():
