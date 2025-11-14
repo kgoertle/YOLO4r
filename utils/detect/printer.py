@@ -62,7 +62,7 @@ class Printer:
         # Smooth handled per-thread
         self.prev_fps_smooth = getattr(self, "prev_fps_smooth", instantaneous)
         fps_smooth = 0.9 * self.prev_fps_smooth + 0.1 * instantaneous
-        self.prev_fps_smooth = fps_smooth
+        self.prev_fps_smooth = None
 
         prev_time = now
 
