@@ -33,7 +33,7 @@ class VideoProcessor:
     ):
         self.weights_path = Path(weights_path)
         self.source = source
-        self.source_type = source_type  # "video" or "usb"
+        self.source_type = source_type
         self.idx = idx
         self.total_sources = total_sources
         self.printer = printer
@@ -45,18 +45,23 @@ class VideoProcessor:
             Path(source).stem if not self.is_camera else f"usb{source}"
         )
 
-        # Threading and buffers
-        self.frame_queue = queue.Queue(maxsize=50)
-        self.stop_reader = threading.Event()
-        self.reader_thread = None
+        # ---------- THREADING QUEUES ----------
+        self.frame_queue = queue.Queue(maxsize=50)       # conservative, safe
+        self.infer_queue = queue.Queue(maxsize=20)       # avoids memory spikes
 
-        # Model & I/O
+        self.stop_reader = threading.Event()
+        self.stop_infer = threading.Event()
+
+        self.reader_thread = None
+        self.infer_thread = None
+
+        # Model / IO
         self.model = None
         self.is_obb_model = False
         self.cap = None
         self.out_writer = None
 
-        # Measurements
+        # Measurement objects
         self.config = MeasurementConfig()
         self.counter = None
         self.aggregator = None
@@ -68,7 +73,7 @@ class VideoProcessor:
 
     # ----------- Initialization -----------
     def initialize(self):
-        # ---- Load YOLO model ----
+        # Load model
         try:
             self.model = YOLO(str(self.weights_path))
             self.model.weights_path = self.weights_path
@@ -77,7 +82,7 @@ class VideoProcessor:
             self.printer.model_fail(e)
             return False
 
-        # Detect OBB model
+        # Detect OBB capability
         try:
             test_frame = np.zeros((640, 640, 3), dtype=np.uint8)
             res = self.model.predict(test_frame, verbose=False, show=False)
@@ -85,14 +90,13 @@ class VideoProcessor:
         except Exception:
             self.is_obb_model = False
 
-        # ---- Initialize classes ----
+        # Load class config
         if self.data_yaml_path and self.data_yaml_path.exists():
             initialize_classes(
                 model_name=self.weights_path.parent.parent.name,
                 data_yaml_path=self.data_yaml_path,
                 printer=self.printer
             )
-
         else:
             model_dir = self.weights_path.parent.parent
             model_yaml = get_model_data_yaml(model_dir, self.printer)
@@ -102,7 +106,7 @@ class VideoProcessor:
                 printer=self.printer
             )
 
-        # ---- Metadata & Timestamps ----
+        # Metadata
         if not self.is_camera:
             metadata = extract_video_metadata(self.source)
         else:
@@ -115,7 +119,7 @@ class VideoProcessor:
         self.start_time = parse_creation_time(metadata) or datetime.now()
         metadata["creation_time_str"] = self.start_time.strftime("%H:%M:%S")
 
-        # ---- Output folder construction ----
+        # Output paths
         self.paths = get_output_folder(
             self.weights_path,
             self.source_type,
@@ -130,7 +134,7 @@ class VideoProcessor:
         with open(self.metadata_file, "w") as f:
             json.dump(metadata, f, indent=2)
 
-        # ---- Capture initialization ----
+        # Capture init
         try:
             if self.is_camera:
                 backend = cv2.CAP_AVFOUNDATION if IS_MAC else cv2.CAP_V4L2
@@ -145,41 +149,57 @@ class VideoProcessor:
             self.printer.open_capture_fail(self.source_display_name)
             return False
 
-        # ---- Frame size ----
-        if self.is_camera:
-            self.frame_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 640)
-            self.frame_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 480)
-        else:
+        # Read first frame to get size
+        if not self.is_camera:
             ret, frame = self.cap.read()
             if not ret:
                 self.printer.read_frame_fail(self.source_display_name)
                 return False
             self.frame_height, self.frame_width = frame.shape[:2]
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-
-        # ---- FPS & total frames ----
-        if not self.is_camera:
-            self.fps_video = self.cap.get(cv2.CAP_PROP_FPS)
-            if not self.fps_video or self.fps_video <= 0 or np.isnan(self.fps_video):
-                self.fps_video = 20.0
-            self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
         else:
-            self.fps_video = 20.0
+            self.frame_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 640)
+            self.frame_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 480)
+
+        # FPS
+        if not self.is_camera:
+            src_fps = self.cap.get(cv2.CAP_PROP_FPS)
+            if not src_fps or src_fps <= 0 or np.isnan(src_fps):
+                src_fps = 30.0
+            self.fps_video = src_fps
+        else:
+            self.fps_video = 30.0
+
+        # ---------- TOTAL FRAMES FOR VIDEO SOURCES ----------
+        if not self.is_camera:
+            total = self.cap.get(cv2.CAP_PROP_FRAME_COUNT)
+            try:
+                total = int(total)
+            except Exception:
+                total = None
+
+            # guard against weird codecs reporting 0 or NaN
+            if total and total > 0:
+                self.total_frames = total
+            else:
+                self.total_frames = None
+        else:
             self.total_frames = None
 
-        # ---- VideoWriter initialization ----
+        # Writer
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer_fps = self.fps_video
         self.out_writer = cv2.VideoWriter(
             str(self.out_file),
             fourcc,
-            self.fps_video,
+            writer_fps,
             (self.frame_width, self.frame_height),
         )
+
         if not self.out_writer.isOpened():
             self.printer.warn(f"VideoWriter failed: {self.source_display_name}")
             return False
 
-        # ---- Register writer ----
         self.printer.register_writer(
             self.out_file.name,
             self.out_writer,
@@ -189,7 +209,7 @@ class VideoProcessor:
             display_name=self.source_display_name,
         )
 
-        # ---- Measurement objects ----
+        # Measurement objects
         self.counter = Counter(
             out_folder=self.paths["counts"],
             config=self.config,
@@ -208,20 +228,16 @@ class VideoProcessor:
 
         return True
 
-    # ---- Reader Thread ----
+    # ---------- Reader Thread ----------
     def start_reader(self):
-        """Thread that continuously reads frames and pushes into a queue."""
-
         def reader():
             while not self.stop_reader.is_set():
-                try:
-                    ret, frame = self.cap.read()
-                except Exception:
-                    ret, frame = False, None
-
+                ret, frame = self.cap.read()
                 if not ret or frame is None:
-                    time.sleep(0.02)
-                    continue
+                    if self.is_camera:
+                        time.sleep(0.01)
+                        continue
+                    break
 
                 try:
                     self.frame_queue.put_nowait(frame)
@@ -235,49 +251,74 @@ class VideoProcessor:
         self.reader_thread = threading.Thread(target=reader, daemon=True)
         self.reader_thread.start()
 
-    # ---- Main run loop ----
+    # ---------- Inference Thread ----------
+    def start_inference(self):
+        def infer():
+            while not self.stop_infer.is_set():
+                try:
+                    frame = self.frame_queue.get(timeout=0.05)
+                except queue.Empty:
+                    continue
+
+                # Resize ONLY for cameras
+                if self.is_camera:
+                    frame_resized = cv2.resize(frame, (self.frame_width, self.frame_height))
+                else:
+                    frame_resized = frame
+
+                try:
+                    results = self.model.predict(
+                        frame_resized, verbose=False, show=False, imgsz=416
+                    )
+                except Exception as e:
+                    self.printer.inference_fail(self.source_display_name, e)
+                    results = None
+
+                try:
+                    self.infer_queue.put_nowait((frame_resized, results))
+                except queue.Full:
+                    try:
+                        self.infer_queue.get_nowait()
+                        self.infer_queue.put_nowait((frame_resized, results))
+                    except queue.Empty:
+                        pass
+
+        self.infer_thread = threading.Thread(target=infer, daemon=True)
+        self.infer_thread.start()
+
+    # ---------- Writer / Processing Loop ----------
     def run(self):
         frame_count = 0
         prev_time = time.time()
         loop_start = time.time()
 
         self.start_reader()
+        self.start_inference()
 
         try:
             while not stop_event.is_set():
                 try:
-                    frame = self.frame_queue.get(timeout=0.5)
+                    frame_resized, results = self.infer_queue.get(timeout=0.1)
                 except queue.Empty:
-                    if self.stop_reader.is_set() and not self.is_camera:
-                        break
                     continue
 
-                frame_resized = cv2.resize(frame, (self.frame_width, self.frame_height))
-
-                # ---- Inference ----
+                # Annotate
                 try:
-                    results = self.model.predict(
-                        frame_resized, verbose=False, show=False, imgsz=640
-                    )
                     annotated = results[0].plot() if results else frame_resized
-                except Exception as e:
-                    self.printer.inference_fail(self.source_display_name, e)
+                except Exception:
                     annotated = frame_resized
 
-                # ---- Extract boxes ----
-                names = {}
-                boxes_list = []
-
+                # Extract boxes
+                names, boxes_list = {}, []
                 if results:
                     r = results[0]
                     names = r.names
 
-                    if self.is_obb_model and hasattr(r, "obb") and r.obb is not None:
+                    if self.is_obb_style(r):
                         xywhr = r.obb.xywhr.cpu().numpy()
                         cls = r.obb.cls.cpu().numpy()
                         boxes_list = [[*b[:4], float(b[4]), int(c)] for b, c in zip(xywhr, cls)]
-
-                    elif hasattr(r, "boxes") and r.boxes is not None:
+                    else:
                         xyxy = r.boxes.xyxy.cpu().numpy()
                         conf = r.boxes.conf.cpu().numpy()
                         cls = r.boxes.cls.cpu().numpy()
@@ -286,19 +327,17 @@ class VideoProcessor:
                             for (x1, y1, x2, y2), cf, c in zip(xyxy, conf, cls)
                         ]
 
-                # Timestamp for this frame
-                video_ts = self.start_time + timedelta(
-                    seconds=frame_count / self.fps_video
-                )
+                # Timestamp
+                video_ts = self.start_time + timedelta(seconds=frame_count / self.fps_video)
 
-                # Counts
+                # Measurements
                 counts = compute_counts_from_boxes(boxes_list, names)
 
                 self.counter.update_counts(boxes_list, names, video_ts)
                 self.aggregator.push_frame_data(video_ts, counts_dict=counts)
                 self.interactions.process_frame(boxes_list, names, video_ts)
 
-                # FPS display
+                # Terminal status
                 fps_smooth, tstr, prev_time, _ = self.printer.format_time_fps(
                     frame_count,
                     prev_time,
@@ -311,32 +350,32 @@ class VideoProcessor:
                 frame_count += 1
                 if frame_count % 5 == 0:
                     self.printer.update_frame_status(
-                        self.idx,
-                        self.source_display_name,
-                        frame_count,
-                        fps_smooth,
-                        counts,
-                        tstr,
+                        self.idx, self.source_display_name, frame_count, fps_smooth, counts, tstr
                     )
 
-                # write frame
+                # Write annotated frame
                 self.out_writer.write(annotated)
 
         finally:
-            # Shutdown and cleanup
+            # Shutdown
             self.stop_reader.set()
+            self.stop_infer.set()
+
             if self.reader_thread:
                 self.reader_thread.join()
+            if self.infer_thread:
+                self.infer_thread.join()
 
             try:
-                if self.cap: self.cap.release()
-                if self.out_writer: self.out_writer.release()
-            except Exception:
+                if self.cap:
+                    self.cap.release()
+                if self.out_writer:
+                    self.out_writer.release()
+            except:
                 pass
 
             saved = [self.out_file, self.metadata_file]
 
-            # Measurement files
             f1 = self.counter.save_results()
             if f1: saved.extend(f1)
             f2 = self.aggregator.save_interval_results()
@@ -345,12 +384,14 @@ class VideoProcessor:
             if f3: saved.append(f3)
             f4 = self.interactions.save_results()
             if f4:
-                if isinstance(f4, list):
-                    saved.extend(f4)
-                else:
-                    saved.append(f4)
+                saved.extend(f4) if isinstance(f4, list) else saved.append(f4)
+
             self.interactions.finalize()
             self.printer.save_measurements(self.paths["scores_folder"], saved)
+
+    # Small helper
+    def is_obb_style(self, r):
+        return self.is_obb_model and hasattr(r, "obb") and r.obb is not None
 
 # ---- Main Entry ----
 def main():
