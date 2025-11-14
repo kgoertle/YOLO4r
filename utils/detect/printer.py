@@ -2,8 +2,7 @@
 import threading, os, re, time
 from pathlib import Path
 from datetime import datetime
-from utils.detect.classes_config import FOCUS_CLASSES, CONTEXT_CLASSES, reload_config
-reload_config()
+from utils.detect.classes_config import FOCUS_CLASSES, CONTEXT_CLASSES
 
 # ---------- CENTRALIZED TERMINAL LOGGING ----------
 class Printer:
