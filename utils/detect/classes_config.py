@@ -2,17 +2,39 @@
 import yaml
 from pathlib import Path
 
-# ---- PULL PATHS ----
-from utils.detect.paths import DEFAULT_DATA_YAML, CLASSES_CONFIG_YAML, CONFIGS_DIR, get_latest_dataset_yaml
+from utils.detect.paths import (
+    DEFAULT_DATA_YAML,
+    CONFIGS_DIR,
+    get_latest_dataset_yaml,
+    get_model_config_dir,
+)
 
-# ---- DEFAULT CLASS STATE ----
+# ----- GLOBALS UPDATED IN-PLACE -----
 FOCUS_CLASSES = []
 CONTEXT_CLASSES = []
 
-# ---------- LOAD CLASSES FROM `data.yaml` FILE ----------
+CURRENT_MODEL_NAME = None
+CURRENT_MODEL_CONFIG = None  
+
+# ---------- INTERNAL HELPERS ----------
+def _set_focus_classes(new_list):
+    global FOCUS_CLASSES
+    FOCUS_CLASSES.clear()
+    FOCUS_CLASSES.extend(new_list)
+
+def _set_context_classes(new_list):
+    global CONTEXT_CLASSES
+    CONTEXT_CLASSES.clear()
+    CONTEXT_CLASSES.extend(new_list)
+
+def _model_config_path(model_name: str) -> Path:
+    """Return /configs/<model>/classes_config.yaml"""
+    model_dir = get_model_config_dir(model_name)
+    return model_dir / "classes_config.yaml"
+
+# ---------- LOAD CLASSES FROM data.yaml ----------
 def load_data_yaml(yaml_path: Path):
     yaml_path = Path(yaml_path)
-
     if not yaml_path.exists():
         print(f"[WARN] data.yaml not found at {yaml_path}")
         return []
@@ -22,22 +44,10 @@ def load_data_yaml(yaml_path: Path):
             data = yaml.safe_load(f) or {}
 
         names = data.get("names")
-
         if isinstance(names, dict):
-            # Convert keys to int → sort → then fetch by index
-            normalized = {}
-            for k, v in names.items():
-                try:
-                    ik = int(k)
-                except Exception:
-                    continue
-                normalized[ik] = v
-
-            ordered_keys = sorted(normalized.keys())
-            return [normalized[k] for k in ordered_keys]
-
+            normalized = {int(k): v for k, v in names.items() if str(k).isdigit()}
+            return [normalized[k] for k in sorted(normalized.keys())]
         if isinstance(names, list):
-            # list format: ['M', 'F', ...]
             return names
 
         print(f"[WARN] Invalid 'names' field in {yaml_path}")
@@ -47,87 +57,90 @@ def load_data_yaml(yaml_path: Path):
         print(f"[ERROR] Failed to parse {yaml_path}: {e}")
         return []
 
-# ---------- CLASS DEF HELPERS ----------
-def _set_focus_classes(new_list):
-    """Mutate FOCUS_CLASSES in-place so existing imports see updates."""
-    global FOCUS_CLASSES
-    FOCUS_CLASSES.clear()
-    FOCUS_CLASSES.extend(new_list)
-
-
-def _set_context_classes(new_list):
-    """Mutate CONTEXT_CLASSES in-place so existing imports see updates."""
-    global CONTEXT_CLASSES
-    CONTEXT_CLASSES.clear()
-    CONTEXT_CLASSES.extend(new_list)
-
-
-# ---------- INITIALIZE CLASSES ----------
-def initialize_classes(force_reload=False, data_yaml_path=None, printer=None):
-    if data_yaml_path:
-        detected = load_data_yaml(data_yaml_path)
-        _set_focus_classes(detected)
-  
-    if CLASSES_CONFIG_YAML.exists() and not force_reload:
-        with open(CLASSES_CONFIG_YAML, "r") as f:
-            saved = yaml.safe_load(f) or {}
-
-        _set_focus_classes(saved.get("FOCUS_CLASSES", []))
-        _set_context_classes(saved.get("CONTEXT_CLASSES", []))
-
-        if FOCUS_CLASSES:
-            return
-
-    if not CLASSES_CONFIG_YAML.exists():
-        save_config()
-
-    fallback_yaml = DEFAULT_DATA_YAML
-    if printer:
-        printer.warn("Using default model data.yaml…")
-
-    latest_ds_yaml = get_latest_dataset_yaml(printer)
-    if latest_ds_yaml:
-        fallback_yaml = latest_ds_yaml
-
-    detected = load_data_yaml(fallback_yaml)
-
-    if not detected:
-        print(f"[WARN] No classes found in fallback YAML: {fallback_yaml}")
-        _set_focus_classes([])
-        _set_context_classes([])
+# ---------- SAVE CONFIG ----------
+def _save_model_config():
+    global CURRENT_MODEL_CONFIG
+    if not CURRENT_MODEL_CONFIG:
+        print("[ERROR] Cannot save config — no model assigned.")
         return
 
-    _set_focus_classes(detected)
-    _set_context_classes([])
-
-    print(f"[INIT] Initialized classes from: {fallback_yaml}")
-
-# ---------- SAVE CLASS CONFIG ----------
-def save_config():
-    CONFIGS_DIR.mkdir(parents=True, exist_ok=True)
+    CURRENT_MODEL_CONFIG.parent.mkdir(parents=True, exist_ok=True)
 
     data = {
         "FOCUS_CLASSES": FOCUS_CLASSES,
         "CONTEXT_CLASSES": CONTEXT_CLASSES,
     }
 
-    with open(CLASSES_CONFIG_YAML, "w") as f:
+    with open(CURRENT_MODEL_CONFIG, "w") as f:
         yaml.safe_dump(data, f, sort_keys=False)
 
-    print(f"[SAVE] Class configuration saved to {CLASSES_CONFIG_YAML}")
+    print(f"[SAVE] Class configuration saved to {CURRENT_MODEL_CONFIG}")
 
-# ---------- RELOAD CONFIG ----------
-def reload_config():
-    if not CLASSES_CONFIG_YAML.exists():
-        print("[WARN] No saved classes_config.yaml found.")
+# ---------- RELOAD EXISTING MODEL CONFIG ----------
+def _reload_model_config(printer=None):
+    """
+    Reload the model-specific classes_config.yaml.
+    If the YAML is corrupted or unreadable, show a clean error message,
+    return False, and allow fallback to data.yaml.
+    """
+
+    if not CURRENT_MODEL_CONFIG or not CURRENT_MODEL_CONFIG.exists():
+        return False
+
+    try:
+        with open(CURRENT_MODEL_CONFIG, "r") as f:
+            saved = yaml.safe_load(f)
+
+        if not isinstance(saved, dict):
+            raise ValueError("Invalid format: expected mapping at root")
+
+        _set_focus_classes(saved.get("FOCUS_CLASSES", []))
+        _set_context_classes(saved.get("CONTEXT_CLASSES", []))
+        return True
+
+    except Exception as e:
+        # ---- CLEAN ERROR MESSAGE ----
+        if printer:
+            printer.error(
+                f"classes_config.yaml is corrupted for model '{CURRENT_MODEL_NAME}'."
+            )
+            printer.warn("Falling back to data.yaml and regenerating config...")
+        else:
+            print(f"[ERROR] Could not load classes_config.yaml: {e}")
+            print(f"[ERROR] Path: {CURRENT_MODEL_CONFIG}")
+
+        return False
+
+# ---------- PUBLIC ENTRYPOINT ----------
+def initialize_classes(model_name, data_yaml_path, force_reload=False, printer=None):
+    global CURRENT_MODEL_NAME, CURRENT_MODEL_CONFIG
+    CURRENT_MODEL_NAME = str(model_name)
+    CURRENT_MODEL_CONFIG = _model_config_path(CURRENT_MODEL_NAME)
+
+    if not force_reload and _reload_model_config(printer=printer):
+        print(f"[INIT] Loaded {len(FOCUS_CLASSES)} classes from: {CURRENT_MODEL_CONFIG}")
         return
+    detected = []
+    if data_yaml_path and Path(data_yaml_path).exists():
+        detected = load_data_yaml(data_yaml_path)
+    if not detected:
+        fallback_yaml = DEFAULT_DATA_YAML
 
-    with open(CLASSES_CONFIG_YAML, "r") as f:
-        saved = yaml.safe_load(f) or {}
+        if printer:
+            printer.warn("Using fallback dataset YAML…")
 
-    _set_focus_classes(saved.get("FOCUS_CLASSES", []))
-    _set_context_classes(saved.get("CONTEXT_CLASSES", []))
+        latest_yaml = get_latest_dataset_yaml(printer)
+        if latest_yaml:
+            fallback_yaml = latest_yaml
 
-# ---------- RESET FUNCTION ----------
-def reset_to_data_yaml(printer=None):
-    initialize_classes(force_reload=True, printer=printer)
+        detected = load_data_yaml(fallback_yaml)
+
+        if not detected:
+            print(f"[WARN] Could not detect ANY classes. Using empty class list.")
+            _set_focus_classes([])
+            _set_context_classes([])
+            return
+    _set_focus_classes(detected)
+    _set_context_classes([])
+
+    _save_model_config()
