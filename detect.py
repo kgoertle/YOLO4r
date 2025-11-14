@@ -152,7 +152,7 @@ class VideoProcessor:
         # Read first frame to get size
         if not self.is_camera:
             ret, frame = self.cap.read()
-            if not ret:
+            if not ret or frame is None:
                 self.printer.read_frame_fail(self.source_display_name)
                 return False
             self.frame_height, self.frame_width = frame.shape[:2]
@@ -186,7 +186,7 @@ class VideoProcessor:
         else:
             self.total_frames = None
 
-        # Writer
+        # ---- VIDEO ENCODING ----
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         writer_fps = self.fps_video
         self.out_writer = cv2.VideoWriter(
@@ -237,16 +237,36 @@ class VideoProcessor:
                     if self.is_camera:
                         time.sleep(0.01)
                         continue
+
+                    # ---------- END OF VIDEO ----------
+                    # Send EOF marker so inference + run() can exit cleanly
+                    try:
+                        self.infer_queue.put(("EOF", None), timeout=0.1)
+                    except:
+                        pass
+
                     break
 
                 try:
-                    self.frame_queue.put_nowait(frame)
+                    self.frame_queue.put(frame, timeout=0.02)
                 except queue.Full:
-                    try:
-                        self.frame_queue.get_nowait()
-                        self.frame_queue.put_nowait(frame)
-                    except queue.Empty:
-                        pass
+                    if self.is_camera:
+                        # Real-time mode → drop frames
+                        try:
+                            self.frame_queue.get_nowait()
+                        except queue.Empty:
+                            pass
+                        try:
+                            self.frame_queue.put(frame, timeout=0.02)
+                        except queue.Full:
+                            pass
+                    else:
+                        while not stop_event.is_set():
+                            try:
+                                self.frame_queue.put(frame, timeout=0.1)
+                                break
+                            except queue.Full:
+                                continue
 
         self.reader_thread = threading.Thread(target=reader, daemon=True)
         self.reader_thread.start()
@@ -256,9 +276,25 @@ class VideoProcessor:
         def infer():
             while not self.stop_infer.is_set():
                 try:
-                    frame = self.frame_queue.get(timeout=0.05)
+                    try:
+                        item = self.frame_queue.get(timeout=0.05)
+                    except queue.Empty:
+                        if stop_event.is_set():
+                            break
+                        continue
                 except queue.Empty:
                     continue
+
+                # ---------- EOF MARKER ----------
+                if isinstance(item, tuple) and item[0] == "EOF":
+                    try:
+                        self.infer_queue.put(("EOF", None), timeout=0.1)
+                    except:
+                        pass
+                    break
+
+                # Normal frame
+                frame = item
 
                 # Resize ONLY for cameras
                 if self.is_camera:
@@ -274,14 +310,20 @@ class VideoProcessor:
                     self.printer.inference_fail(self.source_display_name, e)
                     results = None
 
-                try:
-                    self.infer_queue.put_nowait((frame_resized, results))
-                except queue.Full:
+                # Push to inference queue
+                if self.is_camera:
+                    # Real-time: allow dropping if queue is full
                     try:
-                        self.infer_queue.get_nowait()
                         self.infer_queue.put_nowait((frame_resized, results))
-                    except queue.Empty:
-                        pass
+                    except queue.Full:
+                        try:
+                            self.infer_queue.get_nowait()
+                            self.infer_queue.put_nowait((frame_resized, results))
+                        except queue.Empty:
+                            pass
+                else:
+                    # Video file: NEVER drop frames, block until space
+                    self.infer_queue.put((frame_resized, results))
 
         self.infer_thread = threading.Thread(target=infer, daemon=True)
         self.infer_thread.start()
@@ -298,17 +340,35 @@ class VideoProcessor:
         try:
             while not stop_event.is_set():
                 try:
-                    frame_resized, results = self.infer_queue.get(timeout=0.1)
+                    try:
+                        item = self.infer_queue.get(timeout=0.1)
+                    except queue.Empty:
+                        if stop_event.is_set():
+                            break
+                        continue
+
                 except queue.Empty:
                     continue
 
-                # Annotate
+                # --------- EOF MARKER ----------
+                if (
+                    isinstance(item, tuple)
+                    and len(item) == 2
+                    and isinstance(item[0], str)
+                    and item[0] == "EOF"
+                ):
+                    break
+
+                # Normal case
+                frame_resized, results = item
+
+                # ---------- Annotation ----------
                 try:
                     annotated = results[0].plot() if results else frame_resized
                 except Exception:
                     annotated = frame_resized
 
-                # Extract boxes
+                # ---------- Extract boxes ----------
                 names, boxes_list = {}, []
                 if results:
                     r = results[0]
@@ -317,27 +377,31 @@ class VideoProcessor:
                     if self.is_obb_style(r):
                         xywhr = r.obb.xywhr.cpu().numpy()
                         cls = r.obb.cls.cpu().numpy()
-                        boxes_list = [[*b[:4], float(b[4]), int(c)] for b, c in zip(xywhr, cls)]
+                        boxes_list = [
+                            [*b[:4], float(b[4]), int(c)]
+                            for b, c in zip(xywhr, cls)
+                        ]
                     else:
                         xyxy = r.boxes.xyxy.cpu().numpy()
                         conf = r.boxes.conf.cpu().numpy()
                         cls = r.boxes.cls.cpu().numpy()
                         boxes_list = [
-                            [float(x1), float(y1), float(x2), float(y2), float(cf), int(c)]
+                            [float(x1), float(y1), float(x2), float(y2),
+                             float(cf), int(c)]
                             for (x1, y1, x2, y2), cf, c in zip(xyxy, conf, cls)
                         ]
 
-                # Timestamp
+                # ---------- Timestamp ----------
                 video_ts = self.start_time + timedelta(seconds=frame_count / self.fps_video)
 
-                # Measurements
+                # ---------- Measurements ----------
                 counts = compute_counts_from_boxes(boxes_list, names)
 
                 self.counter.update_counts(boxes_list, names, video_ts)
                 self.aggregator.push_frame_data(video_ts, counts_dict=counts)
                 self.interactions.process_frame(boxes_list, names, video_ts)
 
-                # Terminal status
+                # ---------- Terminal status ----------
                 fps_smooth, tstr, prev_time, _ = self.printer.format_time_fps(
                     frame_count,
                     prev_time,
@@ -350,29 +414,34 @@ class VideoProcessor:
                 frame_count += 1
                 if frame_count % 5 == 0:
                     self.printer.update_frame_status(
-                        self.idx, self.source_display_name, frame_count, fps_smooth, counts, tstr
+                        self.idx, self.source_display_name, frame_count,
+                        fps_smooth, counts, tstr
                     )
 
-                # Write annotated frame
+                # ---------- Write annotated frame ----------
                 self.out_writer.write(annotated)
 
         finally:
-            # Shutdown
+            # ---------- Shutdown ----------
             self.stop_reader.set()
             self.stop_infer.set()
 
+            # Stop reader first – no more frames will enter frame_queue
             if self.reader_thread:
-                self.reader_thread.join()
-            if self.infer_thread:
-                self.infer_thread.join()
+                self.reader_thread.join(timeout=1.0)
 
-            try:
-                if self.cap:
-                    self.cap.release()
-                if self.out_writer:
-                    self.out_writer.release()
-            except:
-                pass
+            # Drain any leftover frames silently (A2 behavior)
+            while True:
+                try:
+                    self.frame_queue.get_nowait()
+                except queue.Empty:
+                    break
+
+            # Wait for inference to finish everything already in infer_queue
+            if self.infer_thread:
+                self.infer_thread.join(timeout=2.0)
+
+            # No need to drain infer_queue: run() loop consumes everything until empty/EOF
 
             saved = [self.out_file, self.metadata_file]
 
