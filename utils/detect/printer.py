@@ -54,20 +54,31 @@ class Printer:
 
     # ---------- FPS + Time Formatting ----------
     def format_time_fps(self, frame_count, prev_time, start_time,
-                        fps_video=None, total_frames=None, source_type="video"):
+                        fps_video=None, total_frames=None, source_type="video",
+                        source_idx=None):
 
         now = time.time()
         instantaneous = 1 / (now - prev_time + 1e-6)
 
-        # Smooth handled per-thread
-        self.prev_fps_smooth = getattr(self, "prev_fps_smooth", instantaneous)
-        fps_smooth = 0.9 * self.prev_fps_smooth + 0.1 * instantaneous
-        self.prev_fps_smooth = None
+        # ---------- PER-SOURCE FPS SMOOTHING ----------
+        if source_idx is None:
+            # Default to global index 0 if unspecified
+            source_idx = 0
+
+        if not hasattr(self, "_fps_smooth"):
+            self._fps_smooth = {}
+
+        instantaneous = min(instantaneous, 60)
+        prev_smooth = self._fps_smooth.get(source_idx, instantaneous)
+        fps_smooth = 0.9 * prev_smooth + 0.1 * instantaneous
+        fps_smooth = min(fps_smooth, 60)
 
         prev_time = now
 
-        # Time formatting
+        # ---------- TIME STRING ----------
         if source_type == "video" and fps_video and total_frames:
+            # show progress using fixed writer FPS
+            fixed_fps = 30.0
             elapsed = int(frame_count / fps_video)
             total = int(total_frames / fps_video)
             time_str = f"{elapsed//60:02d}:{elapsed%60:02d}/{total//60:02d}:{total%60:02d}"
