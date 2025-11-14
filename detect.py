@@ -1,10 +1,11 @@
+# detect.py
 import sys, os, threading, time, platform, queue, json, cv2
 from pathlib import Path
 from datetime import datetime, timedelta
 import numpy as np
 from ultralytics import YOLO
 
-# ---- UTILITIES ----
+# ----------- UTILITIES ---------------
 from utils.detect.paths import get_runs_dir, get_output_folder, get_model_data_yaml
 from utils.detect.arg_parser import parse_arguments
 from utils.detect.printer import Printer
@@ -12,43 +13,62 @@ from utils.detect.measurements import MeasurementConfig, Counter, Interactions, 
 from utils.detect.classes_config import initialize_classes
 from utils.detect.video_metadata import extract_video_metadata, parse_creation_time
 
-# ------ GLOBALS ------
+# ---- SYSTEM ----
 stop_event = threading.Event()
-IS_MAC, IS_LINUX = platform.system() == "Darwin", platform.system() == "Linux"
+IS_MAC = platform.system() == "Darwin"
+IS_LINUX = platform.system() == "Linux"
 
-# ----- DETECTION PROCESSOR -----
+# ----------- VIDEO PROCESSOR -----------
 class VideoProcessor:
-    def __init__(self, weights_path, source, source_type, idx, total_sources, printer, test=False, data_yaml_path=None):
-        self.weights_path = weights_path
+    def __init__(
+        self,
+        weights_path,
+        source,
+        source_type,
+        idx,
+        total_sources,
+        printer,
+        test=False,
+        data_yaml_path=None,
+    ):
+        self.weights_path = Path(weights_path)
         self.source = source
-        self.source_type = source_type
+        self.source_type = source_type  # "video" or "usb"
         self.idx = idx
         self.total_sources = total_sources
         self.printer = printer
         self.test = test
-        self.data_yaml_path = data_yaml_path
+        self.data_yaml_path = Path(data_yaml_path) if data_yaml_path else None
 
         self.is_camera = source_type == "usb"
-        self.source_display_name = Path(source).stem if not self.is_camera else f"usb{source}"
+        self.source_display_name = (
+            Path(source).stem if not self.is_camera else f"usb{source}"
+        )
 
+        # Threading and buffers
         self.frame_queue = queue.Queue(maxsize=50)
         self.stop_reader = threading.Event()
         self.reader_thread = None
 
+        # Model & I/O
         self.model = None
         self.is_obb_model = False
         self.cap = None
         self.out_writer = None
+
+        # Measurements
         self.config = MeasurementConfig()
         self.counter = None
         self.aggregator = None
         self.interactions = None
+
         self.start_time = None
         self.fps_video = None
         self.total_frames = None
 
+    # ----------- Initialization -----------
     def initialize(self):
-        # ---- Initialize YOLO model ----
+        # ---- Load YOLO model ----
         try:
             self.model = YOLO(str(self.weights_path))
             self.model.weights_path = self.weights_path
@@ -57,47 +77,57 @@ class VideoProcessor:
             self.printer.model_fail(e)
             return False
 
-        # ---- Detect if model is OBB ----
+        # Detect OBB model
         try:
-            dummy_frame = np.zeros((640, 640, 3), dtype=np.uint8)
-            dummy_results = self.model.predict(dummy_frame, verbose=False, show=False)
-            self.is_obb_model = hasattr(dummy_results[0], "obb") and dummy_results[0].obb is not None
+            test_frame = np.zeros((640, 640, 3), dtype=np.uint8)
+            res = self.model.predict(test_frame, verbose=False, show=False)
+            self.is_obb_model = hasattr(res[0], "obb") and res[0].obb is not None
         except Exception:
             self.is_obb_model = False
 
         # ---- Initialize classes ----
-        if self.data_yaml_path and Path(self.data_yaml_path).exists():
+        if self.data_yaml_path and self.data_yaml_path.exists():
             initialize_classes(data_yaml_path=self.data_yaml_path)
         else:
-            model_folder = self.weights_path.parent.parent
-            model_yaml = get_model_data_yaml(model_folder, self.printer)
+            model_dir = self.weights_path.parent.parent
+            model_yaml = get_model_data_yaml(model_dir, self.printer)
             initialize_classes(data_yaml_path=model_yaml)
 
-        # ---- Video metadata ----
-        metadata = extract_video_metadata(self.source) if not self.is_camera else {
-            "type": "camera", "source": str(self.source), "creation_time": datetime.now().isoformat()
-        }
+        # ---- Metadata & Timestamps ----
+        if not self.is_camera:
+            metadata = extract_video_metadata(self.source)
+        else:
+            metadata = {
+                "type": "camera",
+                "source": str(self.source),
+                "creation_time": datetime.now().isoformat(),
+            }
+
         self.start_time = parse_creation_time(metadata) or datetime.now()
         metadata["creation_time_str"] = self.start_time.strftime("%H:%M:%S")
 
-        # ---- Output paths ----
+        # ---- Output folder construction ----
         self.paths = get_output_folder(
-            self.weights_path, self.source_type,
+            self.weights_path,
+            self.source_type,
             self.source if not self.is_camera else f"usb{self.source}",
-            test_detect=self.test, base_time=self.start_time if not self.is_camera else None
+            test_detect=self.test,
+            base_time=self.start_time if not self.is_camera else None,
         )
+
         self.out_file = self.paths["video_folder"] / f"{self.paths['safe_name']}.mp4"
         self.metadata_file = self.paths["metadata"]
 
         with open(self.metadata_file, "w") as f:
             json.dump(metadata, f, indent=2)
 
-        # ---- Open video capture ----
+        # ---- Capture initialization ----
         try:
-            self.cap = cv2.VideoCapture(
-                int(self.source) if self.is_camera else str(self.source),
-                cv2.CAP_AVFOUNDATION if IS_MAC else cv2.CAP_V4L2 if IS_LINUX else 0
-            ) if self.is_camera else cv2.VideoCapture(str(self.source))
+            if self.is_camera:
+                backend = cv2.CAP_AVFOUNDATION if IS_MAC else cv2.CAP_V4L2
+                self.cap = cv2.VideoCapture(int(self.source), backend)
+            else:
+                self.cap = cv2.VideoCapture(str(self.source))
 
             if not self.cap.isOpened():
                 self.printer.open_capture_fail(self.source_display_name)
@@ -106,63 +136,84 @@ class VideoProcessor:
             self.printer.open_capture_fail(self.source_display_name)
             return False
 
-        # ---- Frame dimensions ----
+        # ---- Frame size ----
         if self.is_camera:
-            self.frame_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 640
-            self.frame_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 480
+            self.frame_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 640)
+            self.frame_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 480)
         else:
             ret, frame = self.cap.read()
-            if not ret or frame is None:
+            if not ret:
                 self.printer.read_frame_fail(self.source_display_name)
                 return False
             self.frame_height, self.frame_width = frame.shape[:2]
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
         # ---- FPS & total frames ----
-        self.fps_video = self.cap.get(cv2.CAP_PROP_FPS) if not self.is_camera else 20.0
-        if not self.fps_video or self.fps_video <= 0 or np.isnan(self.fps_video):
+        if not self.is_camera:
+            self.fps_video = self.cap.get(cv2.CAP_PROP_FPS)
+            if not self.fps_video or self.fps_video <= 0 or np.isnan(self.fps_video):
+                self.fps_video = 20.0
+            self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        else:
             self.fps_video = 20.0
-        self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0) if not self.is_camera else None
+            self.total_frames = None
 
-        # ---- Video writer ----
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        # ---- VideoWriter initialization ----
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         self.out_writer = cv2.VideoWriter(
             str(self.out_file),
             fourcc,
             self.fps_video,
-            (self.frame_width, self.frame_height)
+            (self.frame_width, self.frame_height),
         )
         if not self.out_writer.isOpened():
-            self.printer.warn(f"VideoWriter failed for {self.source_display_name}")
+            self.printer.warn(f"VideoWriter failed: {self.source_display_name}")
             return False
 
+        # ---- Register writer ----
         self.printer.register_writer(
-            self.out_file.name, self.out_writer, self.cap, self.source_type, self.out_file,
-            display_name=self.source_display_name
+            self.out_file.name,
+            self.out_writer,
+            self.cap,
+            self.source_type,
+            self.out_file,
+            display_name=self.source_display_name,
         )
 
         # ---- Measurement objects ----
-        self.counter = Counter(out_folder=self.paths["counts"], config=self.config, start_time=self.start_time)
-        self.aggregator = Aggregator(out_folder=self.paths["frame-counts"], config=self.config, start_time=self.start_time)
-        self.interactions = Interactions(out_folder=self.paths["interactions"], config=self.config, start_time=self.start_time)
+        self.counter = Counter(
+            out_folder=self.paths["counts"],
+            config=self.config,
+            start_time=self.start_time,
+        )
+        self.aggregator = Aggregator(
+            out_folder=self.paths["frame-counts"],
+            config=self.config,
+            start_time=self.start_time,
+        )
+        self.interactions = Interactions(
+            out_folder=self.paths["interactions"],
+            config=self.config,
+            start_time=self.start_time,
+        )
 
         return True
 
+    # ---- Reader Thread ----
     def start_reader(self):
-        """Read frames safely for USB0 on macOS."""
-        def read_frames():
+        """Thread that continuously reads frames and pushes into a queue."""
+
+        def reader():
             while not self.stop_reader.is_set():
-                ret, frame = False, None
                 try:
                     ret, frame = self.cap.read()
                 except Exception:
-                    pass
+                    ret, frame = False, None
 
-                if not ret or frame is None or frame.size == 0:
-                    time.sleep(0.03)
+                if not ret or frame is None:
+                    time.sleep(0.02)
                     continue
 
-                # Push raw frame; do NOT resize here
                 try:
                     self.frame_queue.put_nowait(frame)
                 except queue.Full:
@@ -172,11 +223,15 @@ class VideoProcessor:
                     except queue.Empty:
                         pass
 
-        self.reader_thread = threading.Thread(target=read_frames, daemon=True)
+        self.reader_thread = threading.Thread(target=reader, daemon=True)
         self.reader_thread.start()
 
+    # ---- Main run loop ----
     def run(self):
-        frame_count, prev_time, fps_smooth, loop_start_time = 0, time.time(), 0.0, time.time()
+        frame_count = 0
+        prev_time = time.time()
+        loop_start = time.time()
+
         self.start_reader()
 
         try:
@@ -188,148 +243,198 @@ class VideoProcessor:
                         break
                     continue
 
-                # Resize here, in main thread, before inference
                 frame_resized = cv2.resize(frame, (self.frame_width, self.frame_height))
 
                 # ---- Inference ----
                 try:
-                    results = self.model.predict(frame_resized, verbose=False, show=False, imgsz=640)
-                    annotated_frame = results[0].plot() if results and len(results) > 0 else frame_resized
+                    results = self.model.predict(
+                        frame_resized, verbose=False, show=False, imgsz=640
+                    )
+                    annotated = results[0].plot() if results else frame_resized
                 except Exception as e:
                     self.printer.inference_fail(self.source_display_name, e)
-                    annotated_frame = frame_resized
+                    annotated = frame_resized
 
-                # ---- Box extraction ----
-                current_boxes_list, names = [], {}
-                if results and len(results) > 0:
-                    res = results[0]
-                    names = res.names
-                    if self.is_obb_model and hasattr(res, "obb") and res.obb is not None:
-                        boxes = res.obb.xywhr.cpu().numpy()
-                        classes = res.obb.cls.cpu().numpy()
-                        current_boxes_list = [[*b[:4], float(b[4]), int(c)] for b, c in zip(boxes, classes)]
-                    elif hasattr(res, "boxes") and res.boxes is not None:
-                        boxes = res.boxes.xyxy.cpu().numpy()
-                        confs = res.boxes.conf.cpu().numpy()
-                        classes = res.boxes.cls.cpu().numpy()
-                        current_boxes_list = [
-                            [float(x1), float(y1), float(x2), float(y2), float(conf), int(c)]
-                            for (x1, y1, x2, y2), conf, c in zip(boxes, confs, classes)
+                # ---- Extract boxes ----
+                names = {}
+                boxes_list = []
+
+                if results:
+                    r = results[0]
+                    names = r.names
+
+                    if self.is_obb_model and hasattr(r, "obb") and r.obb is not None:
+                        xywhr = r.obb.xywhr.cpu().numpy()
+                        cls = r.obb.cls.cpu().numpy()
+                        boxes_list = [[*b[:4], float(b[4]), int(c)] for b, c in zip(xywhr, cls)]
+
+                    elif hasattr(r, "boxes") and r.boxes is not None:
+                        xyxy = r.boxes.xyxy.cpu().numpy()
+                        conf = r.boxes.conf.cpu().numpy()
+                        cls = r.boxes.cls.cpu().numpy()
+                        boxes_list = [
+                            [float(x1), float(y1), float(x2), float(y2), float(cf), int(c)]
+                            for (x1, y1, x2, y2), cf, c in zip(xyxy, conf, cls)
                         ]
 
-                video_time = self.start_time + timedelta(seconds=frame_count / self.fps_video)
-                counts = compute_counts_from_boxes(current_boxes_list, names)
-
-                self.counter.update_counts(current_boxes_list, names, timestamp=video_time)
-                self.aggregator.push_frame_data(video_time, counts_dict=counts)
-                self.interactions.process_frame(current_boxes_list, names, video_time)
-
-                fps_smooth, time_info, prev_time, _ = self.printer.format_time_fps(
-                    frame_count, prev_time, loop_start_time, fps_video=self.fps_video,
-                    total_frames=self.total_frames, source_type=self.source_type
+                # Timestamp for this frame
+                video_ts = self.start_time + timedelta(
+                    seconds=frame_count / self.fps_video
                 )
-                frame_count += 1
 
+                # Counts
+                counts = compute_counts_from_boxes(boxes_list, names)
+
+                self.counter.update_counts(boxes_list, names, video_ts)
+                self.aggregator.push_frame_data(video_ts, counts_dict=counts)
+                self.interactions.process_frame(boxes_list, names, video_ts)
+
+                # FPS display
+                fps_smooth, tstr, prev_time, _ = self.printer.format_time_fps(
+                    frame_count,
+                    prev_time,
+                    loop_start,
+                    fps_video=self.fps_video,
+                    total_frames=self.total_frames,
+                    source_type=self.source_type,
+                )
+
+                frame_count += 1
                 if frame_count % 5 == 0:
                     self.printer.update_frame_status(
-                        self.idx, self.source_display_name, frame_count, fps_smooth, counts, time_info
+                        self.idx,
+                        self.source_display_name,
+                        frame_count,
+                        fps_smooth,
+                        counts,
+                        tstr,
                     )
 
-                self.out_writer.write(annotated_frame)
+                # write frame
+                self.out_writer.write(annotated)
 
         finally:
+            # Shutdown and cleanup
             self.stop_reader.set()
             if self.reader_thread:
                 self.reader_thread.join()
-            if self.cap:
-                try: self.cap.release()
-                except Exception: pass
-            if self.out_writer:
-                try: self.out_writer.release()
-                except Exception: pass
 
-            saved_files = [self.out_file, self.metadata_file]
-            counter_files = self.counter.save_results()
-            if counter_files: saved_files.extend(counter_files)
-            interval_file = self.aggregator.save_interval_results()
-            if interval_file: saved_files.append(interval_file)
-            summary_file = self.aggregator.save_session_summary()
-            if summary_file: saved_files.append(summary_file)
-            interactions_file = self.interactions.save_results()
-            if interactions_file:
-                saved_files.extend(interactions_file) if isinstance(interactions_file, list) else saved_files.append(interactions_file)
+            try:
+                if self.cap: self.cap.release()
+                if self.out_writer: self.out_writer.release()
+            except Exception:
+                pass
+
+            saved = [self.out_file, self.metadata_file]
+
+            # Measurement files
+            f1 = self.counter.save_results()
+            if f1: saved.extend(f1)
+            f2 = self.aggregator.save_interval_results()
+            if f2: saved.append(f2)
+            f3 = self.aggregator.save_session_summary()
+            if f3: saved.append(f3)
+            f4 = self.interactions.save_results()
+            if f4:
+                if isinstance(f4, list):
+                    saved.extend(f4)
+                else:
+                    saved.append(f4)
             self.interactions.finalize()
-            self.printer.save_measurements(self.paths["scores_folder"], saved_files)
+            self.printer.save_measurements(self.paths["scores_folder"], saved)
 
-# ------ MAIN ENTRY ------
+# ---- Main Entry ----
 def main():
     args = parse_arguments()
     printer = Printer(total_sources=len(args.sources))
 
-    # ---- MODEL SELECTION ----
     runs_dir = get_runs_dir(test=args.test)
 
-    # List model directories, exclude 'test' unless test mode
+    # model directories (excluding "test" in normal mode)
     model_dirs = sorted(
-        [d for d in runs_dir.iterdir() if d.is_dir() and (args.test or d.name.lower() != "test")],
-        reverse=True
+        [
+            d
+            for d in runs_dir.iterdir()
+            if d.is_dir() and (args.test or d.name.lower() != "test")
+        ],
+        reverse=True,
     )
 
     if not model_dirs:
         printer.missing_weights(runs_dir)
         sys.exit(1)
 
-    # Prompt user if multiple models exist
+    # Selection menu
     if len(model_dirs) == 1:
-        selected_model = model_dirs[0]
+        selected = model_dirs[0]
     else:
-        selected_model = printer.prompt_model_selection(runs_dir, exclude_test=not args.test)
+        selected = printer.prompt_model_selection(
+            runs_dir, exclude_test=not args.test
+        )
 
-    if not selected_model:
+    if not selected:
         sys.exit(1)
 
-    # Resolve weights
-    selected_model = Path(selected_model)
-    if selected_model.suffix == ".pt":
-        weights_path = selected_model
+    selected = Path(selected)
+
+    # Weights path
+    if selected.suffix == ".pt":
+        weights_path = selected
     else:
-        candidate = selected_model / "weights" / "best.pt"
-        if candidate.exists() and candidate.is_file():
-            weights_path = candidate
+        best = selected / "weights" / "best.pt"
+        if best.exists():
+            weights_path = best
         else:
-            # fallback: use latest .pt in model folder
-            pt_files = sorted(selected_model.rglob("*.pt"), key=lambda p: p.stat().st_mtime, reverse=True)
-            if pt_files:
-                weights_path = pt_files[0]
-                printer.warn(f"No best.pt found; using latest .pt file: {weights_path.name}")
+            pts = sorted(selected.rglob("*.pt"), key=lambda p: p.stat().st_mtime, reverse=True)
+            if pts:
+                weights_path = pts[0]
+                printer.warn(f"No best.pt found — using: {weights_path.name}")
             else:
-                printer.missing_weights(selected_model)
+                printer.missing_weights(selected)
                 sys.exit(1)
 
     if not weights_path.exists() or weights_path.stat().st_size == 0:
-        printer.missing_weights(selected_model)
+        printer.missing_weights(selected)
         sys.exit(1)
 
-    # Load dataset YAML
-    dataset_data_yaml = get_model_data_yaml(selected_model, printer)
-    if dataset_data_yaml is None:
+    # Resolve dataset YAML for class loading
+    data_yaml = get_model_data_yaml(selected, printer)
+    if data_yaml is None:
         sys.exit(1)
 
+    # Build processors
     processors = []
     for idx, src in enumerate(args.sources, start=1):
-        source_type = "usb" if str(src).lower().startswith("usb") else "video"
-        source_id = int(src[3:]) if source_type == "usb" else src
+        s = str(src)
 
-        pproc = VideoProcessor(
-            weights_path, source_id, source_type, idx, len(args.sources),
-            printer, test=args.test, data_yaml_path=dataset_data_yaml
+        if s.lower().startswith("usb"):
+            source_type = "usb"
+            try:
+                source_id = int(s[3:])
+            except ValueError:
+                printer.warn(f"Invalid USB source '{s}' — must be like usb0, usb1")
+                continue
+        else:
+            source_type = "video"
+            source_id = s
+
+        vp = VideoProcessor(
+            weights_path,
+            source_id,
+            source_type,
+            idx,
+            len(args.sources),
+            printer,
+            test=args.test,
+            data_yaml_path=data_yaml,
         )
-        if not pproc.initialize(): continue
-        processors.append(pproc)
+        if vp.initialize():
+            processors.append(vp)
 
+    # Start threads
     threads = []
-    for proc in processors:
-        t = threading.Thread(target=proc.run, daemon=True)
+    for vp in processors:
+        t = threading.Thread(target=vp.run, daemon=True)
         t.start()
         threads.append(t)
 
@@ -339,6 +444,7 @@ def main():
     except KeyboardInterrupt:
         printer.stop_signal_received(single_thread=(len(threads) == 1))
         stop_event.set()
+
         for t in threads:
             while t.is_alive():
                 try:
