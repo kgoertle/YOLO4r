@@ -87,11 +87,20 @@ class VideoProcessor:
 
         # ---- Initialize classes ----
         if self.data_yaml_path and self.data_yaml_path.exists():
-            initialize_classes(data_yaml_path=self.data_yaml_path)
+            initialize_classes(
+                model_name=self.weights_path.parent.parent.name,
+                data_yaml_path=self.data_yaml_path,
+                printer=self.printer
+            )
+
         else:
             model_dir = self.weights_path.parent.parent
             model_yaml = get_model_data_yaml(model_dir, self.printer)
-            initialize_classes(data_yaml_path=model_yaml)
+            initialize_classes(
+                model_name=model_dir.name,
+                data_yaml_path=model_yaml,
+                printer=self.printer
+            )
 
         # ---- Metadata & Timestamps ----
         if not self.is_camera:
