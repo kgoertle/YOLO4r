@@ -4,7 +4,14 @@ from datetime import datetime
 import re
 
 # ---------- PROJECT ROOT ----------
-BASE_DIR = Path(__file__).resolve().parents[2]
+def find_project_root():
+    p = Path(__file__).resolve()
+    for parent in p.parents:
+        if (parent / "utils").exists() and (parent / "detect.py").exists():
+            return parent
+    return p.parents[2]
+
+BASE_DIR = find_project_root()
 
 # ---------- CORE DIRECTORIES ----------
 RUNS_DIR_MAIN = BASE_DIR / "runs"
@@ -25,6 +32,16 @@ MEASURE_CONFIG_YAML = CONFIGS_DIR / "measure_config.yaml"
 # ---------- RUNS DIRECTORY RESOLUTION ----------
 def get_runs_dir(test=False):
     return RUNS_DIR_TEST if test else RUNS_DIR_MAIN
+
+# ---------- MODEL-SPECIFIC CONFIG ROOT ----------
+def get_model_config_dir(model_name: str) -> Path:
+    """
+    Returns /configs/<model_name>/, guaranteed to exist.
+    """
+    model_name = str(model_name).strip()
+    cfg_dir = CONFIGS_DIR / model_name
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    return cfg_dir
 
 # ---------- DATASET YAML LOADING ----------
 def get_latest_dataset_yaml(printer=None):
