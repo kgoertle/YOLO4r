@@ -1,3 +1,4 @@
+# utils/train/wandb_logger.py
 import wandb, warnings
 
 def init_wandb(run_name: str, project: str = "yolo-train", entity: str = "trevelline-lab"):
