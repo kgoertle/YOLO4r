@@ -1,3 +1,4 @@
+# utils/train/results.py
 import json, csv
 from pathlib import Path
 from datetime import datetime
@@ -28,21 +29,34 @@ def parse_results(run_dir: Path) -> dict:
             print(f"[WARN] Failed to parse results.csv: {e}")
             return {}
 
-def save_quick_summary(log_dir: Path, mode: str, epochs: int, metrics: dict, new_imgs=0, total_imgs=0):
-    """Generate a concise training summary file."""
+def save_quick_summary(
+    log_dir: Path,
+    mode: str,
+    epochs: int,
+    metrics: dict,
+    new_imgs=0,
+    total_imgs=0,
+    weights_used="n/a",
+    arch_used="n/a",
+):
     log_dir.mkdir(parents=True, exist_ok=True)
     path = log_dir / "quick-summary.txt"
     with open(path, "w") as f:
         f.write(f"Quick Training Summary\n=======================\n")
-        f.write(f"Date: {datetime.now():%m-%d-%Y %H-%M-%S}\nTraining Type: {mode}\nEpochs Run: {epochs}\n\n")
+        f.write(f"Date: {datetime.now():%m-%d-%Y %H-%M-%S}\n")
+        f.write(f"Training Type: {mode}\n")
+        f.write(f"Epochs Run: {epochs}\n")
+        f.write(f"Model Weights: {weights_used}\n")
+        f.write(f"Model Architecture: {arch_used}\n\n")
         f.write("Best Metrics:\n-------------\n")
         for k in ["F1","Precision","Recall","mAP50","mAP50-95"]:
             f.write(f"{k}: {metrics.get(k,0):.3f}\n")
         f.write("\nLosses:\n-------\n")
         for k in ["Box Loss","Class Loss","DFL Loss"]:
             f.write(f"{k}: {metrics.get(k,0):.4f}\n")
-        f.write(f"\nNew Images Added: {new_imgs}\nTotal Images Used: {total_imgs}\n")
-    print(f"[INFO] Quick summary saved to {path}")
+        f.write(f"\nNew Images Added: {new_imgs}\n")
+        f.write(f"Total Images Used: {total_imgs}\n")
+    print(f"[EXIT] Quick summary saved to {path}")
 
 def save_metadata(log_dir: Path, mode: str, epochs: int, new_imgs: int, total_imgs: int):
     """Save structured metadata.json after training."""
@@ -56,4 +70,4 @@ def save_metadata(log_dir: Path, mode: str, epochs: int, new_imgs: int, total_im
     }
     with open(log_dir / "metadata.json","w") as f: 
         json.dump(meta, f, indent=4)
-    print(f"[INFO] Metadata JSON saved to {log_dir / 'metadata.json'}")
+    print(f"[EXIT] Metadata JSON saved to {log_dir / 'metadata.json'}")
