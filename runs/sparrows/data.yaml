@@ -1,6 +1,6 @@
-path: /Users/kgoertle/YOLO4r/data/sparrow
-train: /Users/kgoertle/YOLO4r/data/sparrow/train/images
-val: /Users/kgoertle/YOLO4r/data/sparrow/validation/images
+path: /Users/kgoertle/YOLO4r/data/sparrows
+train: /Users/kgoertle/YOLO4r/data/sparrows/train/images
+val: /Users/kgoertle/YOLO4r/data/sparrows/validation/images
 nc: 7
 names:
 - F
@@ -9,4 +9,5 @@ names:
 - Main_Perch
 - Nesting_Box
 - Sky_Perch
+
 - Wooden_Perch
