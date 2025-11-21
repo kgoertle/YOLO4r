@@ -1,0 +1,50 @@
+# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+# YOLO11 OBB custom architecture for bird detection with P2/4 - P5/32 outputs.
+
+nc: 7  # M, F, Feeder, Main_Perch, Wooden_Perch, Sky_Perch, Nesting_Box
+
+scales:  # [depth, width, max_channels]
+  n: [0.50, 0.30, 384] 
+  s: [0.75, 0.50, 512]
+  m: [1.00, 0.75, 640]
+
+backbone:
+  # [from, repeats, module, args]
+  - [-1, 1, Conv, [64, 3, 2]]         # 0 - P1/2
+  - [-1, 1, Conv, [128, 3, 2]]        # 1 - P2/4
+  - [-1, 1, C3k2, [128, False]]       # 2 - P2/4 refined
+  - [-1, 1, Conv, [256, 3, 2]]        # 3 - P3/8
+  - [-1, 2, C3k2, [256, False]]       # 4 - P3/8 refined
+  - [-1, 1, Conv, [256, 3, 2]]        # 5 - P4/16
+  - [-1, 2, C2f, [384, True]]         # 6 - P4/16 refined
+  - [-1, 1, Conv, [384, 3, 2]]        # 7 - P5/32
+  - [-1, 2, C2f, [512, True]]         # 8 - P5/32 refined
+  - [-1, 1, SPPF, [512, 5]]           # 9 - P5/32 SPPF
+
+head:
+  # P5 -> P4
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]  # 10
+  - [[-1, 6], 1, Concat, [1]]                   # 11 (P4 cat)
+  - [-1, 1, C2f, [384, False]]                  # 12 - P4/16 feature
+
+  # P4 -> P3
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]  # 13
+  - [[-1, 4], 1, Concat, [1]]                   # 14 (P3 cat)
+  - [-1, 1, C2f, [256, False]]                  # 15 - P3/8 feature
+
+  # P3 -> P2 (small-object layer)
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]  # 16
+  - [[-1, 2], 1, Concat, [1]]                   # 17 (P2 cat)
+  - [-1, 1, C2f, [192, False]]                  # 18 - P2/4 feature (small birds)
+
+  # Down path to reconnect heads
+  - [-1, 1, Conv, [256, 3, 2]]                  # 19 (P3/8 down from P2)
+  - [[-1, 13], 1, Concat, [1]]                  # 20
+  - [-1, 1, C2f, [256, False]]                  # 21 - refined P3/8
+
+  - [-1, 1, Conv, [384, 3, 2]]                  # 22 (P4/16 down)
+  - [[-1, 10], 1, Concat, [1]]                  # 23
+  - [-1, 1, C2f, [384, True]]                   # 24 - refined P4/16
+
+  # Detection head: P2, P3, P4, P5
+  - [[18, 21, 24, 9], 1, OBB, [nc, 1]]
