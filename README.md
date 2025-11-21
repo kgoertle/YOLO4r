@@ -115,7 +115,7 @@ Integrates a **clean, timestamped log structure** for both camera feeds & videos
 #### - Transfer-learning by default:
 `yolo4r train`
 
-**Option to specify weights from either OBB or standard YOLO11 model:**
+**Option to specify weights from either OBB or standard YOLO model:**
 
 `yolo4r train model=(yolo11n, yolo11l-obb, yolov8m, etc.)`
 
@@ -143,7 +143,7 @@ This refers to the most recent `best.pt` file to train from **IF there are new i
 #### - Train a model only from custom dataset:
 `yolo4r train --scratch `
 
-**Option to specify weights from either OBB or standard YOLO11 model.**
+**Option to specify weights from either OBB or standard YOLO model.**
 
 `yolo4r train architecture=(yolo11, yolo12, yolov8-obb, etc.)`
 
@@ -172,3 +172,4 @@ This will **default** to YOLO11.yaml if not specified.
 
 #### - Designed to allow users to route to debug model:
 `yolo4r detect test`
+
