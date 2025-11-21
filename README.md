@@ -156,7 +156,7 @@ This will **default** to YOLO11.yaml if not specified.
 #### - Process Label-Studio export folders:
 `yolo4r train labelstudio="my awesome export!!"`
 
-**NOTE: Many of these commands can be set together, so here are a examples:**
+**NOTE: Many of these commands can be set together, so here are a few examples:**
 
 `yolo4r train labelstudio=geckos model=yolo11m architecture=customgeckomodel`
 
@@ -172,4 +172,5 @@ This will **default** to YOLO11.yaml if not specified.
 
 #### - Designed to allow users to route to debug model:
 `yolo4r detect test`
+
 
