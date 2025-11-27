@@ -256,8 +256,12 @@ This will **default** to YOLO11.yaml if not specified.
 #### - Initiate multiple sources in parallel:
 `yolo4r detect usb0 usb1 "video1.type" "video2.type"`
 
+#### - Run inference using an official YOLO model or custom model:
+`yolo4r detect model=(yolo11, yolo12, yolov8-obb, etc.)`
+
 #### - Designed to allow users to route to debug model:
 `yolo4r detect test`
+
 
 
 
