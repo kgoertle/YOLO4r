@@ -3,6 +3,10 @@ import requests
 import json
 from pathlib import Path
 from typing import Optional
+from ..console import (
+    fmt_exit, fmt_info, fmt_model,
+    fmt_warn, fmt_error, fmt_dataset
+)
 
 # -------- Model name normalization --------
 def normalize_model_name(name: str) -> tuple[str, str | None]:
@@ -51,10 +55,10 @@ def download_file(url: str, dest_path: Path) -> Optional[Path]:
         with open(dest_path, "wb") as f:
             for chunk in r.iter_content(8192):
                 f.write(chunk)
-        print(f"[INFO] Downloaded {dest_path}")
+        print(fmt_info(f"Downloaded {dest_path}"))
         return dest_path
     except Exception as e:
-        print(f"[ERROR] Failed downloading {url}: {e}")
+        print(fmt_error(f"Failed downloading {url}: {e}"))
         return None
 
 # -------- Ensure YAML (architecture) --------
@@ -64,8 +68,8 @@ def ensure_yolo_yaml(yolo_yaml_path: Path, model_type: str) -> Optional[Path]:
     family, _ = normalize_model_name(model_type)
 
     if family not in FAMILY_TO_YAML:
-        print(f"[ERROR] Unsupported architecture family: '{model_type}' → '{family}'")
-        print(f"[ERROR] Supported families: {list(FAMILY_TO_YAML.keys())}")
+        print(fmt_error(f"Unsupported architecture family: '{model_type}' → '{family}'"))
+        print(fmt_error(f"Supported families: {list(FAMILY_TO_YAML.keys())}"))
         return None
 
     if yolo_yaml_path.exists():
@@ -82,53 +86,45 @@ def ensure_yolo_yaml(yolo_yaml_path: Path, model_type: str) -> Optional[Path]:
     }
 
     url = yaml_urls[family]
-    print(f"[DOWNLOAD] Model architecture YAML not found, downloading '{family}' → {yolo_yaml_path}")
+    print(fmt_info(f"Model architecture YAML not found, downloading '{family}' → {yolo_yaml_path}"))
     return download_file(url, yolo_yaml_path)
 
-# -------- Ensure Weights (variants) --------
+# -------- Ensure Weights --------
 def ensure_weights(yolo_weights_path: Path, model_type: str) -> Optional[Path]:
     from .io import FAMILY_TO_WEIGHTS, download_file, normalize_model_name
 
-    # ------- If a DIRECTORY is passed, construct proper filename -------
-    if yolo_weights_path.is_dir():
-        family, variant = normalize_model_name(model_type)
-        is_obb = family.endswith("-obb")
-        family_base = family[:-4] if is_obb else family
-        variant = variant or "n"
+    # Force weights path to a directory *first*
+    if yolo_weights_path.suffix == ".pt":
+        yolo_weights_path = yolo_weights_path.parent
 
-        # Construct correct filename (e.g. yolo11m-obb.pt)
-        weight_filename = f"{family_base}{variant}{'-obb' if is_obb else ''}.pt"
-        yolo_weights_path = yolo_weights_path / weight_filename
-
-    # ------- If file exists, return immediately -------
-    if yolo_weights_path.is_file():
-        return yolo_weights_path
-
-    # ------- Determine full family + variant -------
     family, variant = normalize_model_name(model_type)
     is_obb = family.endswith("-obb")
     family_base = family[:-4] if is_obb else family
     variant = variant or "n"
 
-    # Construct final filename again (needed for download)
-    weight_filename = f"{family_base}{variant}{'-obb' if is_obb else ''}.pt"
-    dest_path = yolo_weights_path.parent / weight_filename
+    correct_name = f"{family_base}{variant}{'-obb' if is_obb else ''}.pt"
+    dest_path = yolo_weights_path / correct_name
 
-    # ------- Handle missing official OBB weights -------
+    # ----- EARLY EXIT -----
+    if dest_path.is_file():
+        return dest_path
+
+    # ----- Handle special cases -----
     if family not in FAMILY_TO_WEIGHTS:
         if family == "yolo12-obb":
-            print(f"[WARN] Pretrained OBB weights were not found for '{family}'.")
-            fallback_family = "yolo12"
-            weight_filename = f"{fallback_family}{variant}.pt"
-            dest_path = yolo_weights_path.parent / weight_filename
-            family = fallback_family
+            print(fmt_warn(f"Pretrained OBB weights not found for '{family}'. Falling back to 'yolo12'."))
+            correct_name = f"yolo12{variant}.pt"
+            dest_path = yolo_weights_path / correct_name
+            family = "yolo12"
+
+            if dest_path.is_file():
+                return dest_path
         else:
-            print(f"[ERROR] Default weights are not registered for '{family}'.")
+            print(fmt_error(f"No registered default weights for '{family}'"))
             return None
 
-    # ------- URL LOOKUP -------
+    # ----- URL lookup -----
     weight_urls = {
-        # ---- YOLOv8 ----
         "yolov8n.pt":  "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt",
         "yolov8s.pt":  "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8s.pt",
         "yolov8m.pt":  "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8m.pt",
@@ -141,7 +137,6 @@ def ensure_weights(yolo_weights_path: Path, model_type: str) -> Optional[Path]:
         "yolov8l-obb.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8l-obb.pt",
         "yolov8x-obb.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8x-obb.pt",
 
-        # ---- YOLO11 ----
         "yolo11n.pt":  "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.pt",
         "yolo11s.pt":  "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11s.pt",
         "yolo11m.pt":  "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11m.pt",
@@ -154,7 +149,6 @@ def ensure_weights(yolo_weights_path: Path, model_type: str) -> Optional[Path]:
         "yolo11l-obb.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11l-obb.pt",
         "yolo11x-obb.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11x-obb.pt",
 
-        # ---- YOLO12 ----
         "yolo12n.pt":  "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo12n.pt",
         "yolo12s.pt":  "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo12s.pt",
         "yolo12m.pt":  "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo12m.pt",
@@ -162,12 +156,12 @@ def ensure_weights(yolo_weights_path: Path, model_type: str) -> Optional[Path]:
         "yolo12x.pt":  "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo12x.pt",
     }
 
-    if weight_filename not in weight_urls:
-        print(f"[ERROR] Could not determine weight URL for '{weight_filename}'")
+    if correct_name not in weight_urls:
+        print(fmt_error(f"No URL for {correct_name}"))
         return None
 
-    print(f"[DOWNLOAD] Model weights not found, downloading '{family}' ({weight_filename}) → {dest_path}")
-    return download_file(weight_urls[weight_filename], dest_path)
+    print(fmt_info(f"Model weights not found, downloading '{model_type}' ({correct_name}) → {dest_path}"))
+    return download_file(weight_urls[correct_name], dest_path)
 
 # -------- Image Counting --------
 def count_images(folder: Path) -> int:
@@ -190,5 +184,5 @@ def load_latest_metadata(logs_root: Path) -> Optional[dict]:
             try:
                 meta = json.load(open(p, "r"))
             except Exception as e:
-                print(f"[WARN] Failed to load metadata JSON file: {e}")
+                print(fmt_warn(f"Failed to load metadata JSON file: {e}"))
     return meta
