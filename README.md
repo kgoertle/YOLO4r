@@ -53,8 +53,11 @@ CONTEXT_CLASSES: []
 ```
 
 A model's class list is extracted straight from its `model.pt` file to prepare a `class_config.yaml` file, which will be located in the `/configs/<model_name>` path.
+
 This allows for a class list to be divided between `focus` & `context` classes that simplifies output statistics & terminal logs.
+
 This class setup is intended to set specific classes as _objects_ for _focus_ classes to interact with, giving context to those interactions primarily.
+
 Please ensure that the [] are removed if defining `context` classes!
 
 ### Measurement System
@@ -255,6 +258,7 @@ This will **default** to YOLO11.yaml if not specified.
 
 #### - Designed to allow users to route to debug model:
 `yolo4r detect test`
+
 
 
 
