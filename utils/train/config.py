@@ -12,7 +12,11 @@ from .io import (
     FAMILY_TO_YAML,
 )
 from .val_split import process_labelstudio_project
-from ..help_text import print_detect_help
+from ..help_text import print_detect_help, print_train_help
+from ..console import (
+    fmt_exit, fmt_info, fmt_model,
+    fmt_warn, fmt_error, fmt_dataset, fmt_path, fmt_bold
+)
 
 # ---- CENTRALIZED PATHS (from utils.paths) ----
 from ..paths import (
@@ -52,7 +56,7 @@ def _install_examples():
             shutil.copytree(pkg_models, target_models, dirs_exist_ok=True)
 
     except Exception as e:
-        print(f"[WARN] Example installation failed: {e}")
+        print(fmt_warn(f"Example installation failed: {e}"))
 
 _install_examples()
 
@@ -119,8 +123,6 @@ def _get_dataset_label_mode(dataset_folder: Path) -> str | None:
 
 def _family_is_obb(family: str | None) -> bool:
     return bool(family and family.endswith("-obb"))
-
-
 
 # -------- Argument Parser --------
 def get_args():
@@ -254,8 +256,8 @@ def get_args():
 
             # family must be one of the official families
             if family not in FAMILY_TO_YAML:
-                print(f"[ERROR] Model family NOT recognized: '{family}'.")
-                print("[ERROR] Valid model families include:")
+                print(fmt_error(f"Model family NOT recognized: '{fmt_bold(family)}'."))
+                print(fmt_error("Valid model families include:"))
                 print("       - yolov8, yolov8-obb")
                 print("       - yolo11, yolo11-obb")
                 print("       - yolo12, (yolo12-obb weights unreleased)")
@@ -265,7 +267,7 @@ def get_args():
 
             # variant must be n/s/m/l/x or None
             if variant not in {None, "n", "s", "m", "l", "x"}:
-                print(f"[ERROR] Model variant NOT recognized '{args.model}'.")
+                print(fmt_error(f"Model variant NOT recognized '{fmt_bold(args.model)}'."))
                 print("        Valid variants are: n, s, m, l, x")
                 sys.exit(1)
 
@@ -274,15 +276,15 @@ def get_args():
         a = args.arch.lower()
         family, _ = normalize_model_name(a)
         if family not in FAMILY_TO_YAML:
-            print(f"[ERROR] Model architecture NOT recognized '{args.arch}'.")
-            print("[ERROR] Valid architectures include:")
+            print(fmt_error(f"Model architecture NOT recognized '{fmt_bold(args.arch)}'."))
+            print(fmt_error("Valid architectures include:"))
             print("       - yolov8, yolov8-obb")
             print("       - yolo11, yolo11-obb")
             print("       - yolo12, yolo12-obb")
             sys.exit(1)
 
     if args.update and args.arch:
-        print("[ERROR] Update CANNOT be used with architecture selection.")
+        print(fmt_error("Update CANNOT be used with architecture selection."))
         sys.exit(1)
 
     # -------- Determine unified name for model + dataset --------
@@ -316,12 +318,12 @@ def get_args():
     if args.dataset:
         dataset_folder = data_root / args.dataset
         if not dataset_folder.exists():
-            print(f"[ERROR] Dataset folder NOT found: {dataset_folder}")
+            print(fmt_error(f"Dataset folder NOT found: {fmt_bold(dataset_folder)}"))
             sys.exit(1)
 
         DATA_YAML = dataset_folder / "data.yaml"
         if not DATA_YAML.exists():
-            print(f"[ERROR] Data YAML NOT found in dataset folder: {DATA_YAML}")
+            print(fmt_error(f"Data YAML NOT found in dataset folder: {fmt_bold(DATA_YAML)}"))
             sys.exit(1)
 
     # ------ USER EXPLICITLY REQUESTED LABEL STUDIO PROJECT ------
@@ -341,11 +343,11 @@ def get_args():
         if args.labelstudio is True or args.labelstudio == "":
             ls_projects = _find_labelstudio_projects(LS_ROOT)
             if not ls_projects:
-                print("[ERROR] Label-Studio projects NOT found in labelstudio-projects/")
+                print(fmt_error("Label-Studio projects NOT found in labelstudio-projects/"))
                 sys.exit(1)
 
             newest = sorted(ls_projects, key=lambda x: x.stat().st_mtime, reverse=True)[0]
-            print(f"[DATA] Using newest Label-Studio project: {newest}")
+            print(fmt_dataset(f"Using newest Label-Studio project: {fmt_path(newest)}"))
             dataset_folder, DATA_YAML = process_labelstudio_project(
                 newest, data_root, dataset_name=args.final_name
             )
@@ -353,18 +355,18 @@ def get_args():
         else:
             specific = LS_ROOT / args.labelstudio
             if not specific.exists():
-                print(f"[ERROR] Specified Label-Studio project NOT found: {specific}")
+                print(fmt_error(f"Specified Label-Studio project NOT found: {fmt_path(specific)}"))
                 sys.exit(1)
 
-            print(f"[DATA] Processing specified Label-Studio project: {specific}")
+            print(fmt_dataset(f"Processing specified Label-Studio project: {fmt_path(specific)}"))
             dataset_folder, DATA_YAML = process_labelstudio_project(
                 specific, data_root, dataset_name=args.final_name
             )
 
         # ---- EARLY EXIT: User only wanted dataset processing ----
         if not training_requested:
-            print(f"[DATA] Finished processing Label-Studio project: {dataset_folder}")
-            print("[INFO] Exiting after dataset creation.")
+            print(fmt_dataset(f"Finished processing Label-Studio project: {fmt_path(dataset_folder)}"))
+            print(fmt_info("Exiting after dataset creation."))
             sys.exit(0)
 
     # ------ NO LS REQUEST — USE LOCAL DATASETS ONLY ------
@@ -372,16 +374,16 @@ def get_args():
         all_datasets = [d for d in data_root.iterdir() if d.is_dir()]
 
         if len(all_datasets) == 0:
-            print("[ERROR] No datasets exist. Provide dataset or use 'labelstudio' flags to process a project.")
+            print(fmt_error("No datasets exist. Provide dataset or use 'labelstudio' flags to process a project."))
             sys.exit(1)
 
         elif len(all_datasets) == 1:
             dataset_folder = all_datasets[0]
             DATA_YAML = dataset_folder / "data.yaml"
-            print(f"[DATA] Auto-selected dataset: {dataset_folder.name}")
+            print(fmt_dataset(f"Auto-selected dataset: {fmt_path(dataset_folder.name)}"))
 
         else:
-            print("[ERROR] Multiple datasets detected; specify with 'dataset' or 'data' flags.")
+            print(fmt_error("Multiple datasets detected; specify with 'dataset' or 'data' flags."))
             print("Available datasets:", [d.name for d in all_datasets])
             sys.exit(1)
 
@@ -421,7 +423,7 @@ def get_args():
         special_y12obb = (requested_model_family == "yolo12-obb")
         if requested_arch_family != requested_model_family and not special_y12obb:
             print(
-                f"[ERROR] Model architecture '{requested_arch_family}' does NOT match model '{requested_model_family}'."
+                fmt_error(f"Model architecture '{fmt_bold(requested_arch_family)}' does NOT match model '{fmt_bold(requested_model_family)}'.")
             )
             sys.exit(1)
 
@@ -454,11 +456,11 @@ def get_args():
 
         if fallback_family:
             if arch_family != fallback_family:
-                print(f"[WARN] Dataset is {label_mode.upper()} and does NOT match selection. Overriding architecture family → {fallback_family}.")
+                print(fmt_warn(f"Dataset is {label_mode.upper()} and does NOT match selection. Overriding architecture family to: {fmt_bold(fallback_family)}."))
                 arch_family = fallback_family
 
             if mode != "scratch" and weight_family != fallback_family:
-                print(f"[WARN] Dataset is {label_mode.upper()} and does NOT match selection. Overriding weight family → {fallback_family}.")
+                print(fmt_warn(f"Dataset is {label_mode.upper()} and does NOT match selection. Overriding weight family to: {fmt_bold(fallback_family)}."))
                 weight_family = fallback_family
 
     # ----------- ARCHITECTURE RESOLUTION (supports custom YAML) -----------
@@ -483,7 +485,7 @@ def get_args():
                 break
 
         if not model_yaml:
-            print(f"[ERROR] Custom model architecture YAML NOT found for '{args.arch}'. Tried:")
+            print(fmt_error(f"Custom model architecture YAML NOT found for '{args.arch}'. Tried:"))
             for cand in candidates:
                 print(f"       - {cand}")
             sys.exit(1)
@@ -492,7 +494,7 @@ def get_args():
         # Official YOLO family architecture
         yaml_name = FAMILY_TO_YAML.get(arch_family)
         if yaml_name is None:
-            print(f"[ERROR] Model architecture YAML NOT registered to '{arch_family}'.")
+            print(fmt_error(f"Model architecture YAML NOT registered to '{fmt_bold(arch_family)}'."))
             sys.exit(1)
 
         model_yaml = ensure_yolo_yaml(
@@ -501,27 +503,27 @@ def get_args():
         )
 
         if model_yaml is None:
-            print(f"[ERROR] Failed to resolve model architecture YAML to '{arch_family}'.")
+            print(fmt_error(f"Failed to resolve model architecture YAML to '{fmt_bold(arch_family)}'."))
             sys.exit(1)
 
-    print(f"[MODEL] Using model architecture YAML: {model_yaml}")
+    print(fmt_model(f"Using model architecture YAML: {fmt_path(model_yaml)}"))
 
     # --------- Custom YAML OBB/HBB enforcement (after model_yaml resolution) ---------
     if custom_arch and dataset_is_obb is not None:
         arch_is_obb = yaml_is_obb(model_yaml)
 
         if dataset_is_obb and not arch_is_obb:
-            print("[ERROR] OBB dataset requires an OBB-capable architecture. The specified YAML does not contain OBB layers.")
+            print(fmt_error("OBB dataset requires an OBB-capable architecture. The specified YAML does not contain OBB layers."))
             sys.exit(1)
 
         if not dataset_is_obb and arch_is_obb:
-            print("[ERROR] HBB dataset cannot be trained with an OBB architecture. The specified YAML contains OBB layers.")
+            print(fmt_error("HBB dataset cannot be trained with an OBB architecture. The specified YAML contains OBB layers."))
             sys.exit(1)
 
     # ------------- WEIGHTS RESOLUTION (AFTER FALLBACK) -------------
     if mode != "scratch":
         if weight_family not in FAMILY_TO_WEIGHTS and weight_family != "yolo12-obb":
-            print(f"[ERROR] Default weights are NOT registered for '{weight_family}'.")
+            print(fmt_error(f"Default weights are NOT registered for '{fmt_bold(weight_family)}'."))
             sys.exit(1)
 
         # args.model may carry variant info (yolo11m, yolo11x-obb, etc.)
