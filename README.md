@@ -10,7 +10,7 @@ An open-source, automated animal-behavior detection pipeline.
 
 - Multi-source real-time inference (video & live camera feeds).
 - Structured logging of detections, interactions, & per-frame aggregate statistics.
-- Automatic metadata extraction for precise timestamping for video and camera sources.
+- Automatic metadata extraction for precise timestamping for video & camera sources.
 - Full configurability & modular design for research reproducibility.
 
 This project remains open-source & under active development as part of an undergraduate research initiative. Contributions & feedback are always welcome!
@@ -114,7 +114,7 @@ Integrates a **clean, timestamped log structure** for both camera feeds & videos
 
 ### Terminal UI
 Note that YOLO4r is a _headless_ detection pipeline, meaning that live display windows will _not_ appear while running inference. 
-Instead, the terminal logs & tracks initiation, FPS, and basic statistics.
+Instead, the terminal logs & tracks initiation, FPS, & basic statistics.
 
 #### Here is an example of what to expect from the terminal:
 ```
@@ -258,6 +258,7 @@ This will **default** to YOLO11.yaml if not specified.
 
 #### - Designed to allow users to route to debug model:
 `yolo4r detect test`
+
 
 
 
