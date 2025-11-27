@@ -4,13 +4,13 @@
 An open-source, automated animal-behavior detection pipeline.
 
 ## Overview
-**YOLO4r (1.0.0)** is a research-oriented, Ultralytics-based pipeline designed to make custom deep-learning model training & behavioral detection accessible to field & laboratory researchers.  
+**YOLO4r (1.1.0)** is a research-oriented, Ultralytics-based pipeline designed to make custom deep-learning model training & behavioral detection accessible to field & laboratory researchers.  
 
 **YOLO4r supports:**
 
 - Multi-source real-time inference (video & live camera feeds).
 - Structured logging of detections, interactions, & per-frame aggregate statistics.
-- Automatic metadata extraction for precise timestamping.
+- Automatic metadata extraction for precise timestamping for video and camera sources.
 - Full configurability & modular design for research reproducibility.
 
 This project remains open-source & under active development as part of an undergraduate research initiative. Contributions & feedback are always welcome!
@@ -18,7 +18,7 @@ This project remains open-source & under active development as part of an underg
 ## Features
 
 ### Model Training
-- Supports **transfer learning**, **training from scratch**, or **incremental updating** of an existing model.  
+- Supports **transfer learning** or **training from scratch** of an existing model.  
 - Automatically exports **training metrics** to:
   - `Weights & Biases` (W&B)  
   - `quick-summary.txt` (local lightweight summary)
@@ -35,6 +35,27 @@ This project remains open-source & under active development as part of an underg
   - `FOCUS_CLASSES`: primary subjects (e.g., animal species)
   - `CONTEXT_CLASSES`: contextual or environmental elements (e.g., feeders, water trays, etc)
 - Class lists are stored in & managed through `classes_config.yaml` within the config folder, allowing for easy modification without editing code.
+
+
+####Here is an example of the a `classes_config.yaml` file:
+```
+FOCUS_CLASSES:
+- F
+- M
+- Feeder
+- Main_Perch
+- Nesting_Box
+- Sky_Perch
+- Wooden_Perch
+
+CONTEXT_CLASSES: []
+
+```
+
+A model's class list is extracted straight from its `model.pt` file to prepare a `class_config.yaml` file, which will be located in the `/configs/<model_name>` path.
+This allows for a class list to be divided between `focus` & `context` classes that simplifies output statistics & terminal logs.
+This class setup is intended to set specific classes as _objects_ for _focus_ classes to interact with, giving context to those interactions primarily.
+Please ensure that the [] are removed if defining `context` classes!
 
 Default example model trained on **7 classes**:
   - `M` (Male Passer domesticus), `F` (Female Passer domesticus), `Feeder`, `Main_Perch`, `Wooden_Perch`, `Sky_Perch`, `Nesting_Box`
@@ -91,6 +112,64 @@ Integrates a **clean, timestamped log structure** for both camera feeds & videos
 - Folder names are **automatically sanitized** to avoid filesystem errors.  
 - Each source has its own **isolated measurement subdirectory**.  
 
+### Terminal UI
+Note that YOLO4r is a _headless_ detection pipeline, meaning that live display windows will _not_ appear while running inference. 
+Instead, the terminal logs & tracks initiation, FPS, and basic statistics.
+
+####Here is an example of what to expect from the terminal:
+```
+YOLO4r Detection
+----------------
+
+[MODEL] Sparrows
+
+[birdsflying] Frames:-- | FPS:-- | Time:-- | ETA:--
+  F:-
+  M:-
+  OBJECTS:-
+
+[daytimebirds] Frames:-- | FPS:-- | Time:-- | ETA:--
+  F:-
+  M:-
+  OBJECTS:-
+
+------------------------------------------------------------------------------------------------
+
+[MODEL] Sparrows
+
+[INFO] 3 models found in runs folder:
+[INFO] Loaded 7 classes: ['F', 'Feeder', 'M', 'Main_Perch', 'Nesting_Box', 'Sky_Perch', 'Wooden_
+[INFO] Recording initialized at 11/26/2025 23:19:28
+[INFO] Source 'birdsflying' completed.
+[INFO] Source 'daytimebirds' completed.
+
+------------------------------------------------------------------------------------------------
+
+[MODEL] Sparrows
+
+[SAVE] Measurements for birdsflying:
+[SAVE] Measurements saved to: "measurements/video-in/birdsflying/11-18-2025_07-52-03/scores"
+      - birdsflying.mp4
+      - birdsflying_metadata.json
+      - counts.csv
+      - average_counts.csv
+      - interval_results.csv
+      - session_summary.csv
+      - interactions.csv
+
+[SAVE] Measurements for daytimebirds:
+[SAVE] Measurements saved to: "measurements/video-in/daytimebirds/11-18-2025_08-40-04/scores"
+      - daytimebirds.mp4
+      - daytimebirds_metadata.json
+      - counts.csv
+      - average_counts.csv
+      - interval_results.csv
+      - session_summary.csv
+      - interactions.csv
+
+[EXIT] All detection threads safely terminated.
+```
+
 ## Installation
 #### 1. Install MiniConda or Conda:
 `https://www.anaconda.com/docs/getting-started/miniconda/main`
@@ -133,15 +212,7 @@ This will **default** to using YOLO11n.pt if not specified.
 This will **default** to the most recent dataset within the /data folder.
 
 
-#### - Update the most recently trained model:
-
-`yolo4r train update=(model name)`
-
-This refers to the most recent `best.pt` file to train from **IF there are new images found in the dataset folder**.
-
-
 #### - Train a model only from custom dataset:
-`yolo4r train --scratch `
 
 **Option to specify weights from either OBB or standard YOLO model.**
 
@@ -151,7 +222,7 @@ This will **default** to YOLO11.yaml if not specified.
 
 
 #### - Designed to allow users to debug training operation:
-`yolo4r train --test`
+`yolo4r train test`
 
 #### - Process Label-Studio export folders:
 `yolo4r train labelstudio="my awesome export!!"`
@@ -172,5 +243,6 @@ This will **default** to YOLO11.yaml if not specified.
 
 #### - Designed to allow users to route to debug model:
 `yolo4r detect test`
+
 
 
