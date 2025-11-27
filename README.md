@@ -57,9 +57,6 @@ This allows for a class list to be divided between `focus` & `context` classes t
 This class setup is intended to set specific classes as _objects_ for _focus_ classes to interact with, giving context to those interactions primarily.
 Please ensure that the [] are removed if defining `context` classes!
 
-Default example model trained on **7 classes**:
-  - `M` (Male Passer domesticus), `F` (Female Passer domesticus), `Feeder`, `Main_Perch`, `Wooden_Perch`, `Sky_Perch`, `Nesting_Box`
-
 ### Measurement System
 - Data collection centralized in single helper utility that handles:
   - Frame-level counts  
@@ -121,34 +118,34 @@ Instead, the terminal logs & tracks initiation, FPS, and basic statistics.
 YOLO4r Detection
 ----------------
 
-[MODEL] Sparrows
+[MODEL] Model
 
-[birdsflying] Frames:-- | FPS:-- | Time:-- | ETA:--
-  F:-
-  M:-
+[video1] Frames:-- | FPS:-- | Time:-- | ETA:--
+  class1:-
+  class2:-
   OBJECTS:-
 
-[daytimebirds] Frames:-- | FPS:-- | Time:-- | ETA:--
-  F:-
-  M:-
+[usb0] Frames:-- | FPS:-- | Time:--
+  class1:-
+  class2:-
   OBJECTS:-
 
 ------------------------------------------------------------------------------------------------
 
-[MODEL] Sparrows
+[MODEL] Model
 
 [INFO] 3 models found in runs folder:
-[INFO] Loaded 7 classes: ['F', 'Feeder', 'M', 'Main_Perch', 'Nesting_Box', 'Sky_Perch', 'Wooden_
+[INFO] Loaded 6 classes: ['class1', 'class2', 'class3', 'class4', 'class5', 'class6'
 [INFO] Recording initialized at 11/26/2025 23:19:28
-[INFO] Source 'birdsflying' completed.
-[INFO] Source 'daytimebirds' completed.
+[INFO] Source 'video1' completed.
+[INFO] Source 'usb0' completed.
 
 ------------------------------------------------------------------------------------------------
 
-[MODEL] Sparrows
+[MODEL] Model
 
-[SAVE] Measurements for birdsflying:
-[SAVE] Measurements saved to: "measurements/video-in/birdsflying/11-18-2025_07-52-03/scores"
+[SAVE] Measurements for video1:
+[SAVE] Measurements saved to: "measurements/video-in/video1/mm-dd-yyyy_hh-mm-ss/scores"
       - birdsflying.mp4
       - birdsflying_metadata.json
       - counts.csv
@@ -157,8 +154,8 @@ YOLO4r Detection
       - session_summary.csv
       - interactions.csv
 
-[SAVE] Measurements for daytimebirds:
-[SAVE] Measurements saved to: "measurements/video-in/daytimebirds/11-18-2025_08-40-04/scores"
+[SAVE] Measurements for usb0:
+[SAVE] Measurements saved to: "measurements/camera-feeds/usb0/mm-dd-yyyy_hh-mm-ss/scores"
       - daytimebirds.mp4
       - daytimebirds_metadata.json
       - counts.csv
@@ -169,6 +166,18 @@ YOLO4r Detection
 
 [EXIT] All detection threads safely terminated.
 ```
+
+## Default example model trained on _7 classes_:
+  - `M` (Male Passer domesticus)
+  - `F` (Female Passer domesticus)
+  - `Feeder`
+  - `Main_Perch`
+  - `Wooden_Perch`
+  - `Sky_Perch`
+  - `Nesting_Box`
+
+The model was trained **using this pipeline** & has been used for primary testing purposes.
+The purpose of this model in particular is use for tracking & logging basic behavioral attributes of captive _Passer domesticus_ subjects influenced by various intestinal microbial communities over an individual's development.
 
 ## Installation
 #### 1. Install MiniConda or Conda:
@@ -243,6 +252,7 @@ This will **default** to YOLO11.yaml if not specified.
 
 #### - Designed to allow users to route to debug model:
 `yolo4r detect test`
+
 
 
 
