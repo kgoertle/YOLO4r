@@ -37,7 +37,7 @@ This project remains open-source & under active development as part of an underg
 - Class lists are stored in & managed through `classes_config.yaml` within the config folder, allowing for easy modification without editing code.
 
 
-####Here is an example of the a `classes_config.yaml` file:
+#### Here is an example of the a _classes config YAML_ file:
 ```
 FOCUS_CLASSES:
 - F
@@ -116,7 +116,7 @@ Integrates a **clean, timestamped log structure** for both camera feeds & videos
 Note that YOLO4r is a _headless_ detection pipeline, meaning that live display windows will _not_ appear while running inference. 
 Instead, the terminal logs & tracks initiation, FPS, and basic statistics.
 
-####Here is an example of what to expect from the terminal:
+#### Here is an example of what to expect from the terminal:
 ```
 YOLO4r Detection
 ----------------
@@ -243,6 +243,7 @@ This will **default** to YOLO11.yaml if not specified.
 
 #### - Designed to allow users to route to debug model:
 `yolo4r detect test`
+
 
 
 
