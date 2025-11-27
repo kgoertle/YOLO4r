@@ -146,8 +146,8 @@ YOLO4r Detection
 
 [SAVE] Measurements for video1:
 [SAVE] Measurements saved to: "measurements/video-in/video1/mm-dd-yyyy_hh-mm-ss/scores"
-      - birdsflying.mp4
-      - birdsflying_metadata.json
+      - video1.mp4
+      - video1_metadata.json
       - counts.csv
       - average_counts.csv
       - interval_results.csv
@@ -156,8 +156,8 @@ YOLO4r Detection
 
 [SAVE] Measurements for usb0:
 [SAVE] Measurements saved to: "measurements/camera-feeds/usb0/mm-dd-yyyy_hh-mm-ss/scores"
-      - daytimebirds.mp4
-      - daytimebirds_metadata.json
+      - usb0.mp4
+      - usb0_metadata.json
       - counts.csv
       - average_counts.csv
       - interval_results.csv
@@ -177,7 +177,10 @@ YOLO4r Detection
   - `Nesting_Box`
 
 The model was trained **using this pipeline** & has been used for primary testing purposes.
+
 The purpose of this model in particular is use for tracking & logging basic behavioral attributes of captive _Passer domesticus_ subjects influenced by various intestinal microbial communities over an individual's development.
+
+To be clear, the model is still in development & included for users to demonstrate a custom model trained through the pipeline.
 
 ## Installation
 #### 1. Install MiniConda or Conda:
@@ -252,6 +255,7 @@ This will **default** to YOLO11.yaml if not specified.
 
 #### - Designed to allow users to route to debug model:
 `yolo4r detect test`
+
 
 
 
