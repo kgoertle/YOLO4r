@@ -3,6 +3,11 @@ import json, csv
 from pathlib import Path
 from datetime import datetime
 
+from ..console import (
+    fmt_exit, fmt_info, fmt_model,
+    fmt_warn, fmt_error, fmt_dataset, fmt_path
+)
+
 def parse_results(run_dir: Path) -> dict:
     csv_path = run_dir / "results.csv"
     if not csv_path.exists(): return {}
@@ -25,7 +30,7 @@ def parse_results(run_dir: Path) -> dict:
                 "DFL Loss": float(row.get("train/dfl_loss",0)),
             }
         except Exception as e:
-            print(f"[WARN] Failed to parse results.csv: {e}")
+            print(fmt_warn(f"Failed to parse results.csv: {e}"))
             return {}
 
 def save_quick_summary(
@@ -55,10 +60,11 @@ def save_quick_summary(
             f.write(f"{k}: {metrics.get(k,0):.4f}\n")
         f.write(f"\nNew Images Added: {new_imgs}\n")
         f.write(f"Total Images Used: {total_imgs}\n")
-    print(f"[EXIT] Quick summary saved to {path}")
+    print(fmt_exit(f"Quick summary saved to {fmt_path(path)}"))
 
 def save_metadata(log_dir: Path, mode: str, epochs: int, new_imgs: int, total_imgs: int):
     """Save structured metadata.json after training."""
+    path = log_dir / "metadata.json"
     log_dir.mkdir(parents=True, exist_ok=True)
     meta = {
         "timestamp": datetime.now().isoformat(),
@@ -69,4 +75,5 @@ def save_metadata(log_dir: Path, mode: str, epochs: int, new_imgs: int, total_im
     }
     with open(log_dir / "metadata.json","w") as f: 
         json.dump(meta, f, indent=4)
-    print(f"[EXIT] Metadata JSON saved to {log_dir / 'metadata.json'}")
+    path = log_dir / "metadata.json"
+    print(fmt_exit(f"Metadata JSON saved to {fmt_path(path)}"))
