@@ -8,7 +8,7 @@ from ultralytics import YOLO
 # ----------- UTILITIES ---------------
 from .utils.paths import get_runs_dir, get_output_folder, WEIGHTS_DIR
 from .utils.detect.arguments import parse_arguments
-from .utils.detect.printer import Printer
+from .utils.console import Console, fmt_bold
 from .utils.detect.measurements import MeasurementConfig, Counter, Interactions, Aggregator, compute_counts_from_boxes
 from .utils.detect.classes_config import initialize_classes
 from .utils.detect.video_util import VideoSourceInfo, extract_video_metadata, extract_camera_metadata, VideoReader, create_video_writer, write_annotated_frame, extract_boxes_from_results
@@ -187,11 +187,17 @@ class VideoProcessor:
         # ---------- TOTAL FRAMES FOR VIDEO SOURCES ----------
         if not self.is_camera:
             total = self.cap.get(cv2.CAP_PROP_FRAME_COUNT)
-            try:
-                total = int(total)
-            except Exception:
-                total = None
-            self.total_frames = total if total and total > 0 else None
+
+            # OpenCV frequently returns 0 or -1 on macOS / AVFoundation.
+            if total is None or total < 2:
+                # fallback to duration * fps
+                duration = src_info.duration  # from ffprobe metadata
+                if duration:
+                    self.total_frames = int(duration * self.fps_video)
+                else:
+                    self.total_frames = None
+            else:
+                self.total_frames = int(total)
         else:
             self.total_frames = None
 
@@ -321,7 +327,7 @@ class VideoProcessor:
                 self.interactions.process_frame(boxes_list, names, video_ts)
 
                 # ---------- Terminal status ----------
-                fps_smooth, tstr, prev_time, _ = self.printer.format_time_fps(
+                fps_smooth, tstr, prev_time, eta = self.printer.format_time_fps(
                     frame_count,
                     prev_time,
                     loop_start,
@@ -333,12 +339,8 @@ class VideoProcessor:
                 frame_count += 1
                 if frame_count % 5 == 0:
                     self.printer.update_frame_status(
-                        self.idx,
-                        self.source_display_name,
-                        frame_count,
-                        fps_smooth,
-                        counts,
-                        tstr,
+                        self.idx, self.source_display_name, frame_count,
+                        fps_smooth, counts, tstr, eta
                     )
 
                 # ---------- Write annotated frame ----------
@@ -384,7 +386,7 @@ class VideoProcessor:
 # ---- Main Entry ----
 def main():
     args = parse_arguments()
-    printer = Printer(total_sources=len(args.sources))
+    printer = Console(total_sources=len(args.sources))
 
     runs_dir = get_runs_dir(test=args.test)
     selected = None
@@ -405,7 +407,7 @@ def main():
             # Case 2 - Explicit .pt path
             if model_path.suffix == ".pt":
                 if not model_path.exists():
-                    printer.error(f"Model file does not exist: {model_path}")
+                    printer.error(f"Model file does not exist: {fmt_bold(model_path)}")
                     printer.exit("Detection aborted due to missing weights file.")
                     sys.exit(1)
 
@@ -520,6 +522,7 @@ def main():
     for idx, src in enumerate(args.sources, start=1):
         s = str(src)
 
+        # First determine source_type
         if s.lower().startswith("usb"):
             source_type = "usb"
             try:
@@ -530,6 +533,9 @@ def main():
         else:
             source_type = "video"
             source_id = s
+
+        # THEN assign to the UI
+        printer.sources[idx - 1]["source_type"] = source_type
 
         vp = VideoProcessor(
             weights_path,
