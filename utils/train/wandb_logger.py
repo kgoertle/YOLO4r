@@ -1,6 +1,12 @@
 # utils/train/wandb_logger.py
 import wandb, warnings
 from pathlib import Path
+
+from ..console import (
+    fmt_exit, fmt_info, fmt_model,
+    fmt_warn, fmt_error, fmt_dataset, fmt_path
+)
+
 from ..paths import WANDB_ROOT
 
 def init_wandb(run_name: str, project: str = "yolo-train", entity: str = "trevelline-lab"):
@@ -16,7 +22,7 @@ def init_wandb(run_name: str, project: str = "yolo-train", entity: str = "trevel
         reinit=True
     )
 
-    print(f"[INFO] W&B logging enabled for run: {run_name}")
-    print(f"[INFO] W&B directory: {wandb_dir}")
+    print(fmt_info(f"Logging enabled for run: {fmt_path(run_name)}"))
+    print(fmt_info(f"W&B directory: {fmt_path(wandb_dir)}"))
 
     return run
