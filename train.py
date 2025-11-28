@@ -1,8 +1,8 @@
-# train.py
-import sys, time, shutil, wandb, yaml, logging
+import sys, time, shutil, wandb, yaml, logging, os
 from pathlib import Path
 from datetime import datetime
 from ultralytics import YOLO
+from ultralytics.utils import LOGGER
 
 # ------ UTILITIES ------
 from .utils.train import (
@@ -19,15 +19,27 @@ from .utils.train import (
     init_wandb,
 )
 
+# ------ CONSOLE UI ------
+from .utils.console import (
+    fmt_info, fmt_warn, fmt_error, fmt_model, fmt_dataset, fmt_train, fmt_exit, fmt_path,
+    clear_terminal, print_training_header, print_training_footer,
+    quiet_ultralytics_logs, quiet_wandb_logs,
+    apply_ultralytics_patch, remove_ultralytics_patch, print_training_header_static
+)
+
 # ------------- TRAINING FUNCTION -------------
 def train_yolo(args, mode="train", checkpoint=None, resume_flag=False):
     """Orchestrates YOLO model training based on mode and arguments."""
 
     # ------------- VALIDATE DATASET YAML -------------
     if not args.DATA_YAML.exists():
-        print(f"[ERROR] DATA_YAML not found: {args.DATA_YAML}")
+        print(fmt_error(f"DATA_YAML not found: {args.DATA_YAML}"))
         return
 
+    # ------------- PATH SETUP -------------
+    paths = get_training_paths(args.DATA_YAML.parent, test=args.test)
+
+    # ------------- TRAINING PARAMETER SETUP -------------
     reset_weights = (mode == "scratch")
     epochs, imgsz = (10, 640) if args.test else (120, 640)
     if reset_weights and not args.test:
@@ -46,82 +58,82 @@ def train_yolo(args, mode="train", checkpoint=None, resume_flag=False):
         new_imgs = total_imgs - prev_total
 
         if new_imgs <= 0:
-            print("[EXIT] No new images detected. Skipping training.")
+            print(fmt_exit("No new images detected. Skipping training."))
             return
 
-        print(f"[INFO] {new_imgs} new images detected. Proceeding with update.")
+        print(fmt_info(f"{new_imgs} new images detected. Proceeding with update."))
 
     # ------------- MODEL SOURCE SELECTION -------------
-    # Use the custom_arch flag resolved in config.py
     custom_arch_supplied = getattr(args, "custom_arch", False)
 
+    # Default flags
+    use_pretrained = False
+    model_source = None
+
     if mode == "scratch":
-        # Always use architecture (custom or official)
+        # Always use pure YAML, no pretrained weights
         model_source = str(args.model_yaml)
         use_pretrained = False
         checkpoint = None
 
     else:
-        # ---- TRANSFER LEARNING OR UPDATE ----
+        # Prefer checkpoint if available (resume/update)
         if checkpoint:
-            # Resuming always loads checkpoint .pt
             model_source = str(Path(checkpoint))
             use_pretrained = True
 
+        # Otherwise, if we have resolved weights from get_args(), use those
+        elif getattr(args, "weights", None):
+            model_source = str(args.weights)
+            use_pretrained = True
+
+        # Final fallback: YAML only (Ultralytics decides weights)
         else:
-            # Transfer-learning logic
-            if custom_arch_supplied:
-                # Custom YAML + pretrained weights
-                model_source = str(args.model_yaml)
-                use_pretrained = True   # allow pretrained layers to load
-            else:
-                # Official architecture case → use resolved weights
-                model_source = str(ensure_weights(args.weights, model_type=str(args.model) if args.model else "yolo11"))
-                use_pretrained = True
+            model_source = str(args.model_yaml)
+            use_pretrained = True  # this just tells Ultralytics to use its default n-scale
+
+    if model_source is None:
+        print(fmt_error("Could not resolve a model source (weights or architecture)."))
+        return
 
     # ------------- DEVICE + RUN NAME -------------
     device, batch_size, workers = select_device()
     timestamp = datetime.now().strftime("%m-%d-%Y_%H-%M-%S")
     run_name = args.name or timestamp
-    print(f"[MODEL] Model will be saved as: {run_name}")
 
-    paths = get_training_paths(args.DATA_YAML.parent, test=args.test)
+    print(fmt_model(f"Saved as: {fmt_path(run_name)}"))
 
-    # --- CLASS COUNT ENFORCEMENT FOR SCRATCH OBB TRAINING ---
-    def enforce_nc_in_yaml(yaml_path, nc):
-        """Ensure model yaml has correct nc for OBB models."""
-        try:
-            with open(yaml_path, "r") as f:
-                cfg = yaml.safe_load(f)
+    # ------------- CONSOLE & LOGGER SETUP -------------
+    quiet_ultralytics_logs()
+    quiet_wandb_logs()
 
-            # Only enforce when YAML contains OBB head or nc mismatch
-            if "obb" in yaml_path.name.lower() or cfg.get("nc", None) != nc:
-                cfg["nc"] = nc
-                tmp_path = yaml_path.parent / f"_tmp_{yaml_path.name}"
-                with open(tmp_path, "w") as f:
-                    yaml.safe_dump(cfg, f)
-                return tmp_path
+    print_training_header()
 
-            return yaml_path
-
-        except Exception as e:
-            print(f"[WARN] Could not enforce nc in YAML: {e}")
-            return yaml_path
-
-    # ------------- MODEL INITIALIZATION -------------
-    model = YOLO(model_source, task="detect")
-
-    # ------------- W&B HANDLING -------------
+    # --- W&B init ---
     try:
         init_wandb(run_name)
     except Exception as e:
-        print(f"[WARN] Failed to initialize W&B: {e}")
+        print(fmt_warn(f"Failed to initialize W&B: {e}"))
+
+    print_training_footer(
+        model_source=model_source,
+        dataset_name=args.dataset_folder.name,
+        batch_size=batch_size,
+        workers=workers,
+        epochs=epochs,
+    )
+
+    # ULTRALYTICS MODEL INIT
+    model = YOLO(model_source, task="detect")
+
+    # Patch Ultralytics logger for clean epoch table output
+    apply_ultralytics_patch()
 
     start_time = time.time()
+    skip_completion = False
 
     # ------------- TRAINING CALL -------------
     try:
-        
         model.train(
             data=str(args.DATA_YAML),
             model=model_source,
@@ -148,18 +160,35 @@ def train_yolo(args, mode="train", checkpoint=None, resume_flag=False):
             translate=0.1,
             plots=False,
             verbose=False,
-            show=True,
+            show=False,
             show_labels=True,
             show_conf=True,
         )
+
     except KeyboardInterrupt:
-        print("\n[EXIT] Training interrupted by user. Partially completed results preserved.")
+        patched_info = LOGGER.info
+        patched_info.interrupted = True
+        remove_ultralytics_patch()
+        skip_completion = True
+        print_training_header_static()
+        print(fmt_exit("Training interrupted by user. Partial results preserved."))
+
     except Exception as e:
-        print(f"[ERROR] Training failed: {e}")
+        patched_info = LOGGER.info
+        patched_info.interrupted = True
+        remove_ultralytics_patch()
+        print_training_header()
+        print(fmt_error(f"Training failed: {e}"))
         return
 
+    # ------------- AFTER TRAINING -------------
     elapsed = (time.time() - start_time) / 60
-    print(f"[EXIT] Training completed in {elapsed:.2f} minutes.")
+
+    remove_ultralytics_patch()
+
+    if not skip_completion:
+        print_training_header_static()
+        print(fmt_exit(f"Training completed in {elapsed:.2f} minutes."))
 
     # ------------- RUN DIRECTORY RESOLUTION -------------
     try:
@@ -170,12 +199,9 @@ def train_yolo(args, mode="train", checkpoint=None, resume_flag=False):
     except Exception:
         return
 
-    # ------------- METRICS + METADATA SAVING -------------
+    # ------------- METRICS + METADATA -------------
     try:
         metrics = parse_results(run_folder) or {}
-
-        weights_str = args.weights.name if args.weights else "n/a"
-        arch_str = args.model_yaml.name if args.model_yaml else "n/a"
 
         save_quick_summary(
             log_dir=log_dir,
@@ -184,42 +210,37 @@ def train_yolo(args, mode="train", checkpoint=None, resume_flag=False):
             metrics=metrics,
             new_imgs=new_imgs,
             total_imgs=total_imgs,
-            weights_used=weights_str,
-            arch_used=arch_str,
+            weights_used=args.weights.name if args.weights else "n/a",
+            arch_used=args.model_yaml.name if args.model_yaml else "n/a",
         )
 
         save_metadata(log_dir, mode, epochs, new_imgs, total_imgs)
 
     except Exception as e:
-        print(f"[ERROR] Failed to save post-training metadata: {e}")
+        print(fmt_warn(f"Failed to save metadata JSON: {e}"))
+
+    # ------------- COPY DATA.YAML INTO RUN FOLDER -------------
+    try:
+        dst_yaml = run_folder / "data.yaml"
+
+        if not dst_yaml.exists():
+            shutil.copy(args.DATA_YAML, dst_yaml)
+            print(fmt_exit(f"Copied dataset YAML to: {fmt_path(dst_yaml)}"))
+
+    except Exception as e:
+        print(fmt_warn(f"Could not copy dataset YAML: {e}"))
 
     # ------------- W&B SHUTDOWN -------------
     try:
         if wandb.run:
             wandb.finish()
-            print("[EXIT] W&B run finalized cleanly.")
     except Exception as e:
-        print(f"[WARN] Could not close W&B run cleanly: {e}")
-
-    # ------------- COPY DATA.YAML INTO RUN FOLDER -------------
-    try:
-        run_weights_folder = run_folder / "weights"
-        run_weights_folder.mkdir(parents=True, exist_ok=True)
-
-        dst_yaml = run_folder / "data.yaml"
-        if not dst_yaml.exists():
-            shutil.copy(args.DATA_YAML, dst_yaml)
-            print(f"[EXIT] Copied dataset YAML to model folder: {dst_yaml}")
-
-    except Exception as e:
-        print(f"[WARN] Could not copy data.yaml to model folder: {e}")
+        print(fmt_warn(f"Could not close W&B cleanly: {e}"))
 
 
 # ------------- MAIN ENTRY -------------
 def main():
     args, mode = get_args()
-
-    checkpoint, resume_flag = None, args.resume
 
     try:
         checkpoint, resume_flag = get_checkpoint_and_resume(
@@ -232,17 +253,16 @@ def main():
         )
 
         if mode == "update" and checkpoint:
-            print(f"[MODEL] Updating model from: {checkpoint}")
+            print(fmt_model(f"Updating model from: {fmt_path(checkpoint)}"))
         elif mode == "train":
-            print(f"[MODEL] Training model from transfered weights: {args.weights}")
+            print(fmt_model(f"Training model from transferred weights: {args.weights}"))
         elif mode == "scratch":
-            print(f"[MODEL] Training model from scratch using model architecture: {args.model_yaml}")
-
+            print(fmt_model(f"Training from scratch using architecture: {args.model_yaml}"))
         if resume_flag and checkpoint:
-            print(f"[MODEL] Resuming model training from: {checkpoint}")
+            print(fmt_model(f"Resuming model from: {fmt_path(checkpoint)}"))
 
     except FileNotFoundError as e:
-        print(f"[ERROR] {e}")
+        print(fmt_error(str(e)))
         sys.exit(1)
 
     train_yolo(args, mode=mode, checkpoint=checkpoint, resume_flag=resume_flag)
