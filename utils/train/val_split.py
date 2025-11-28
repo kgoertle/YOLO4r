@@ -6,6 +6,10 @@ from pathlib import Path
 from datetime import datetime
 import yaml
 
+# ---- Console UI ----
+from ..console import (
+    fmt_info, fmt_warn, fmt_error, fmt_save, fmt_path, fmt_bold
+)
 
 # ---- Detect OBB vs HBB ----
 def _detect_label_mode(lbl_folder: Path) -> str:
@@ -23,12 +27,17 @@ def _detect_label_mode(lbl_folder: Path) -> str:
     return "hbb"
 
 # ---- Main LS → YOLO dataset processor ----
-def process_labelstudio_project(project_folder: Path, data_root: Path, train_pct: float = 0.8, dataset_name: str | None = None):
+def process_labelstudio_project(project_folder: Path, data_root: Path,
+                                train_pct: float = 0.8,
+                                dataset_name: str | None = None):
+
     project_folder = Path(project_folder).resolve()
     data_root = Path(data_root).resolve()
 
     if not project_folder.exists():
-        raise FileNotFoundError(f"Label-Studio project folder NOT found: {project_folder}")
+        raise FileNotFoundError(
+            fmt_error(f"Label-Studio project folder NOT found: {fmt_path(project_folder)}")
+        )
 
     # ---- Check for previously processed dataset ----
     for existing in data_root.iterdir():
@@ -39,10 +48,13 @@ def process_labelstudio_project(project_folder: Path, data_root: Path, train_pct
             continue
         try:
             meta = json.load(open(meta_path, "r"))
-            if meta.get("processed") and Path(meta.get("original_project")).resolve() == project_folder:
+            if (
+                meta.get("processed")
+                and Path(meta.get("original_project")).resolve() == project_folder
+            ):
                 data_yaml = existing / "data.yaml"
                 if data_yaml.exists():
-                    print(f"[INFO] Found existing processed dataset: {existing}")
+                    print(fmt_info(f"Found existing processed dataset: {fmt_path(existing)}"))
                     return existing, data_yaml
         except Exception:
             pass
@@ -54,22 +66,20 @@ def process_labelstudio_project(project_folder: Path, data_root: Path, train_pct
 
     if not img_folder.is_dir() or not lbl_folder.is_dir() or not classes_file.exists():
         raise FileNotFoundError(
-            f"Label-Studio project must contain images/, labels/, and classes.txt: {project_folder}"
+            fmt_error(
+                f"Label-Studio project must contain "
+                f"{fmt_path('images/')}, {fmt_path('labels/')}, {fmt_path('classes.txt')}: "
+                f"{fmt_path(project_folder)}"
+            )
         )
 
     # ---- Detect label mode ----
     label_mode = _detect_label_mode(lbl_folder)
-    print(f"[DATA] Detected label mode: {label_mode.upper()}")
+    print(fmt_info(f"Detected label mode: {fmt_bold(label_mode.upper())}"))
 
-    # ---- Determine output dataset folder ----
+    # ---- Output dataset folder ----
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-    if dataset_name:
-        # Use user or timestamp-chosen dataset name
-        base = dataset_name
-    else:
-        base = project_folder.name
-
+    base = dataset_name or project_folder.name
     dataset_folder = data_root / base
 
     # Safe increment if exists
@@ -84,26 +94,26 @@ def process_labelstudio_project(project_folder: Path, data_root: Path, train_pct
     # ---- Create train/val folder structure ----
     train_img = dataset_folder / "train/images"
     train_lbl = dataset_folder / "train/labels"
-    val_img = dataset_folder / "val/images"
-    val_lbl = dataset_folder / "val/labels"
+    val_img   = dataset_folder / "val/images"
+    val_lbl   = dataset_folder / "val/labels"
+
     for p in (train_img, train_lbl, val_img, val_lbl):
         p.mkdir(parents=True, exist_ok=True)
 
-    # ---- Gather and split images ----
+    # ---- Gather / shuffle / split images ----
     all_imgs = list(img_folder.glob("*"))
     if not all_imgs:
-        raise RuntimeError(f"Images NOT found in: {img_folder}")
+        raise RuntimeError(fmt_error(f"Images NOT found in: {fmt_path(img_folder)}"))
 
     random.shuffle(all_imgs)
     split_idx = int(len(all_imgs) * train_pct)
     train_imgs = all_imgs[:split_idx]
-    val_imgs = all_imgs[split_idx:]
+    val_imgs   = all_imgs[split_idx:]
 
     # ---- Copy image/label pairs ----
     def _copy_pairs(img_list, out_img_dir, out_lbl_dir):
         for img_path in img_list:
             shutil.copy2(img_path, out_img_dir / img_path.name)
-
             lbl_src = lbl_folder / f"{img_path.stem}.txt"
             if lbl_src.exists():
                 shutil.copy2(lbl_src, out_lbl_dir / lbl_src.name)
@@ -116,20 +126,22 @@ def process_labelstudio_project(project_folder: Path, data_root: Path, train_pct
         names = [x.strip() for x in f.readlines() if x.strip()]
 
     if not names:
-        raise RuntimeError(f"Class names NOT found in: {classes_file}")
+        raise RuntimeError(fmt_error(f"Class names NOT found in: {fmt_path(classes_file)}"))
 
     data_yaml = dataset_folder / "data.yaml"
     yaml.dump(
         {
             "path": str(dataset_folder.resolve()),
             "train": str(train_img.resolve()),
-            "val": str(val_img.resolve()),
+            "val":   str(val_img.resolve()),
             "nc": len(names),
             "names": names,
         },
         open(data_yaml, "w"),
         sort_keys=False,
     )
+
+    print(fmt_save(f"Created dataset YAML: {fmt_path(data_yaml)}"))
 
     # ---- Save metadata ----
     metadata = {
@@ -143,5 +155,7 @@ def process_labelstudio_project(project_folder: Path, data_root: Path, train_pct
 
     with open(dataset_folder / "metadata.json", "w") as f:
         json.dump(metadata, f, indent=4)
+
+    print(fmt_save(f"Saved metadata: {fmt_path(dataset_folder / 'metadata.json')}"))
 
     return dataset_folder, data_yaml
