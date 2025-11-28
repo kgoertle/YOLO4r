@@ -4,7 +4,7 @@
 An open-source, automated animal-behavior detection pipeline.
 
 ## Overview
-**YOLO4r (1.1.0)** is a research-oriented, Ultralytics-based pipeline designed to make custom deep-learning model training & behavioral detection accessible to field & laboratory researchers.  
+**YOLO4r (1.1.6)** is a research-oriented, Ultralytics-based pipeline designed to make custom deep-learning model training & behavioral detection accessible to field & laboratory researchers.  
 
 **YOLO4r supports:**
 
@@ -121,34 +121,34 @@ Instead, the terminal logs & tracks initiation, FPS, & basic statistics.
 YOLO4r Detection
 ----------------
 
-[MODEL] Model
+model: Model
 
-[video1] Frames:-- | FPS:-- | Time:-- | ETA:--
+video1: Frames:-- | FPS:-- | Time:-- | ETA:--
   class1:-
   class2:-
   OBJECTS:-
 
-[usb0] Frames:-- | FPS:-- | Time:--
+usb0: Frames:-- | FPS:-- | Time:--
   class1:-
   class2:-
   OBJECTS:-
 
 ------------------------------------------------------------------------------------------------
 
-[MODEL] Model
+model: Model
 
-[INFO] 3 models found in runs folder:
-[INFO] Loaded 6 classes: ['class1', 'class2', 'class3', 'class4', 'class5', 'class6'
-[INFO] Recording initialized at 11/26/2025 23:19:28
-[INFO] Source 'video1' completed.
-[INFO] Source 'usb0' completed.
+info: 3 models found in runs folder:
+info: Loaded 6 classes: ['class1', 'class2', 'class3', 'class4', 'class5', 'class6'
+info: Recording initialized at 11/26/2025 23:19:28
+info: Source 'video1' completed.
+info: Source 'usb0' completed.
 
 ------------------------------------------------------------------------------------------------
 
-[MODEL] Model
+model: Model
 
-[SAVE] Measurements for video1:
-[SAVE] Measurements saved to: "measurements/video-in/video1/mm-dd-yyyy_hh-mm-ss/scores"
+save: Measurements for video1:
+save: Measurements saved to: "measurements/video-in/video1/mm-dd-yyyy_hh-mm-ss/scores"
       - video1.mp4
       - video1_metadata.json
       - counts.csv
@@ -157,8 +157,8 @@ YOLO4r Detection
       - session_summary.csv
       - interactions.csv
 
-[SAVE] Measurements for usb0:
-[SAVE] Measurements saved to: "measurements/camera-feeds/usb0/mm-dd-yyyy_hh-mm-ss/scores"
+save: Measurements for usb0:
+save: Measurements saved to: "measurements/camera-feeds/usb0/mm-dd-yyyy_hh-mm-ss/scores"
       - usb0.mp4
       - usb0_metadata.json
       - counts.csv
@@ -167,7 +167,7 @@ YOLO4r Detection
       - session_summary.csv
       - interactions.csv
 
-[EXIT] All detection threads safely terminated.
+exit: All detection threads safely terminated.
 ```
 
 ## Default example model trained on _7 classes_:
@@ -261,6 +261,7 @@ This will **default** to YOLO11.yaml if not specified.
 
 #### - Designed to allow users to route to debug model:
 `yolo4r detect test`
+
 
 
 
